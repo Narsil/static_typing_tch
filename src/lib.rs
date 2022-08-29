@@ -146,9 +146,33 @@ impl Args {
             },
             _ => panic!("cat is not supposed to be call that way"),
         };
-        println!("Tensors {types:#?}");
 
-        todo!("Need to finish cat");
+        let type_ = types
+            .into_iter()
+            .reduce(|mut accum, item| {
+                assert!(item.kind == accum.kind);
+                assert!(item.device == accum.device);
+                assert!(item.shape.len() == accum.shape.len());
+                for (i, (dim_acc, dim_it)) in
+                    accum.shape.iter_mut().zip(item.shape.iter()).enumerate()
+                {
+                    let i = i as i64;
+                    if i != dim {
+                        assert!(dim_acc == dim_it);
+                    } else {
+                        match &mut dim_acc.expr {
+                            DimExpr::Add(a) => a.push(dim_it.expr.clone()),
+                            n => {
+                                dim_acc.expr = DimExpr::Add(vec![n.clone(), dim_it.expr.clone()]);
+                            }
+                        };
+                    }
+                }
+                accum
+            })
+            .unwrap();
+
+        type_
     }
 
     fn detect_type(&self, expr: &Expr) -> TensorType {
@@ -179,7 +203,9 @@ impl Args {
                     .iter()
                     .filter_map(|elem| match elem {
                         Expr::Lit(expr_lit) => match &expr_lit.lit {
-                            Lit::Int(lit_int) => Some(Dim::Value(lit_int.base10_parse().unwrap())),
+                            Lit::Int(lit_int) => {
+                                Some(Dim::from_num(lit_int.base10_parse().unwrap()))
+                            }
                             _ => todo!(),
                         },
                         _ => None,
@@ -299,17 +325,26 @@ impl Args {
 
     fn detect_type_dim(&self, type_: &Type) -> Dim {
         match type_ {
-            Type::Path(path) => Dim::Symbol(path.path.segments[0].ident.to_string()),
+            Type::Path(path) => Dim::from_symbol(path.path.segments[0].ident.to_string()),
             Type::TraitObject(object) => {
-                let bound = &object.bounds[0];
-                match bound {
-                    TypeParamBound::Trait(traits) => {
-                        Dim::Symbol(traits.path.segments[0].ident.to_string())
-                    }
-                    _ => todo!("Finish bound in dim"),
-                }
+                let dims: Vec<DimExpr> = object
+                    .bounds
+                    .iter()
+                    .map(|bound| self.detect_type_bound(bound))
+                    .collect();
+                Dim::from_add(dims)
             }
             s => todo!("Finish dim! {s:?}"),
+        }
+    }
+
+    fn detect_type_bound(&self, bound: &TypeParamBound) -> DimExpr {
+        match bound {
+            TypeParamBound::Trait(traits) => {
+                println!("TRaits {traits:?}");
+                DimExpr::Symbol(traits.path.segments[0].ident.to_string())
+            }
+            _ => todo!("Finish bound in dim"),
         }
     }
 
@@ -354,8 +389,31 @@ fn compatible(left: &DetectedType, right: &DetectedType) -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Dim {
+struct Dim {
+    expr: DimExpr,
+}
+
+impl Dim {
+    pub fn from_num(n: usize) -> Self {
+        let expr = DimExpr::Value(n);
+        Self { expr }
+    }
+
+    pub fn from_symbol(symbol: String) -> Self {
+        let expr = DimExpr::Symbol(symbol);
+        Self { expr }
+    }
+
+    pub fn from_add(dims: Vec<DimExpr>) -> Self {
+        let expr = DimExpr::Add(dims);
+        Self { expr }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DimExpr {
     Value(usize),
+    Add(Vec<DimExpr>),
     Symbol(String),
 }
 
@@ -439,6 +497,11 @@ impl Fold for Args {
                         let detected_type = self.detect_type_call(call);
                         if detected_type != self.return_type {
                             e.span().unwrap().error(format!("The return type \"{detected_type:?}\" does not match the expected return type \"{:?}\"", self.return_type)).emit();
+                        } else {
+                            println!(
+                                "There is a correct match between {detected_type:?} and {:?}",
+                                self.return_type
+                            );
                         }
                     }
                     _ => (),
