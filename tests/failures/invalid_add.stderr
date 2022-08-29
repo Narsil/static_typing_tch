@@ -1,4 +1,4 @@
-error: Tensor mismatch Inferred(TensorType { shape: [Value(2), Value(3)], kind: Float, device: Cpu }) is incompatible with Inferred(TensorType { shape: [Value(3), Value(2)], kind: Float, device: Cpu })
+error: Tensor mismatch Inferred(TensorType { shape: [Dim { expr: Value(2) }, Dim { expr: Value(3) }], kind: Float, device: Cpu }) is incompatible with Inferred(TensorType { shape: [Dim { expr: Value(3) }, Dim { expr: Value(2) }], kind: Float, device: Cpu })
   --> tests/failures/invalid_add.rs:10:14
    |
 10 |     let _c = a + b;
