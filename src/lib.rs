@@ -34,12 +34,26 @@ impl Args {
 
 impl Args {
     fn let_and_print(&mut self, local: Local) -> Stmt {
-        let Local { pat, init, .. } = local;
+        let Local { mut pat, init, .. } = local;
         let expr = *init.unwrap().1;
 
-        let ident = match pat {
+        let ident = match &mut pat {
             Pat::Ident(ref p) => &p.ident,
-            _ => unreachable!(),
+            Pat::Type(ref mut t) => {
+                let pat = &*t.pat;
+                if let Pat::Ident(ref p) = pat {
+                    // TODO Actually read the type of the tensor and affect it
+                    let name = &p.ident;
+                    let pat_type = self.detect_type_type(&mut t.ty);
+                    if let DetectedType::Inferred(t) = pat_type {
+                        self.assign_type(name, t);
+                    }
+                    &p.ident
+                } else {
+                    todo!("let and print Type {t:?}");
+                }
+            }
+            n => todo!("let and print {n:?}"),
         };
         match &expr {
             Expr::Call(m) => self.maybe_assign_type(&ident, m),
@@ -54,16 +68,14 @@ impl Args {
                     b.span().unwrap().error(error).emit();
                 }
             }
-            s => println!("Other {s:?}"),
+            Expr::MethodCall(_m) => {
+                todo!("Implement method call");
+            }
+            s => todo!("Other {s:?}"),
         }
         let init = self.fold_expr(expr);
         parse_quote! {
-            let #pat = {
-                #[allow(unused_mut)]
-                let #pat = #init;
-                println!(concat!(stringify!(#ident), " = {:?}"), #ident);
-                #ident
-            };
+            let #pat =#init;
         }
     }
 
@@ -76,10 +88,34 @@ impl Args {
                         .unwrap_or(&DetectedType::NotDetected)
                         .clone()
                 } else {
-                    todo!()
+                    todo!("Too many path segments")
                 }
             }
-            _ => todo!(),
+            Expr::Binary(binary) => {
+                let left = self.get_type(&*binary.left);
+                let right = self.get_type(&*binary.right);
+                match (left, right) {
+                    (DetectedType::NotTensor, DetectedType::NotTensor) => DetectedType::NotTensor,
+                    (n, DetectedType::NotTensor) => n,
+                    (DetectedType::NotTensor, n) => n,
+                    (n, m) => {
+                        if n != m {
+                            binary
+                                .span()
+                                .unwrap()
+                                .error(format!("Type are incompatible {n:?} and {m:?}"))
+                                .emit();
+
+                            DetectedType::NotDetected
+                        } else {
+                            m
+                        }
+                    }
+                }
+            }
+            Expr::Lit(_) => DetectedType::NotTensor,
+            Expr::Paren(p) => self.get_type(&*p.expr),
+            expr => todo!("Expr {expr:?}"),
         }
     }
 
@@ -123,7 +159,7 @@ impl Args {
                     DetectedType::NotTensor
                 }
             }
-            _ => todo!(),
+            expr => todo!("type call {expr:?}"),
         }
     }
 
@@ -183,16 +219,16 @@ impl Args {
                 match self.vars.get(name) {
                     Some(DetectedType::Declared(tensor_type)) => tensor_type.clone(),
                     Some(DetectedType::Inferred(tensor_type)) => tensor_type.clone(),
-                    _ => {
+                    n => {
                         name.span()
                             .unwrap()
                             .error("Couldn't get the tensor type for this variable")
                             .emit();
-                        unreachable!();
+                        todo!("the name {name:?} was resolved as {n:?}");
                     }
                 }
             }
-            _ => todo!(),
+            expr => todo!("Expr detect type {expr:?}"),
         }
     }
 
@@ -206,14 +242,14 @@ impl Args {
                             Lit::Int(lit_int) => {
                                 Some(Dim::from_num(lit_int.base10_parse().unwrap()))
                             }
-                            _ => todo!(),
+                            lit => todo!("Detect shape lit {lit:?}"),
                         },
                         _ => None,
                     })
                     .collect(),
-                _ => todo!(),
+                expr => todo!("Detect shape2 {expr:?}"),
             },
-            _ => todo!(),
+            expr => todo!("Detect shape {expr:?}"),
         }
     }
 
@@ -223,27 +259,29 @@ impl Args {
                 assert!(elems.len() == 2);
                 let kind = match &elems[0] {
                     Expr::Path(ExprPath { path, .. }) => {
-                        if &path.segments[1].ident.to_string() == "Float" {
+                        let name = &path.segments[1].ident.to_string();
+                        if name == "Float" {
                             Kind::Float
                         } else {
-                            todo!()
+                            todo!("Detect kind device kind literal {name:?}")
                         }
                     }
-                    _ => todo!(),
+                    expr => todo!("detect kind device kind {expr:?}"),
                 };
                 let device = match &elems[1] {
                     Expr::Path(ExprPath { path, .. }) => {
-                        if &path.segments[1].ident.to_string() == "Cpu" {
+                        let device = &path.segments[1].ident.to_string();
+                        if device == "Cpu" {
                             Device::Cpu
                         } else {
-                            todo!()
+                            todo!("Detect kind device device literal {device:?}")
                         }
                     }
-                    _ => todo!(),
+                    expr => todo!("detect kind device device {expr:?}"),
                 };
                 (kind, device)
             }
-            _ => todo!(),
+            expr => todo!("Detect kind device {expr:?}"),
         }
     }
 
@@ -252,34 +290,28 @@ impl Args {
             FnArg::Typed(PatType { pat, ty, .. }) => {
                 let name = match *pat {
                     Pat::Ident(ident) => ident.ident,
-                    _ => todo!(),
+                    pat => todo!("Pat {pat:?}"),
                 };
                 let mut ty = ty.clone();
                 let detected_type = self.detect_type_type(&mut *ty);
                 (name, *ty, detected_type)
             }
-            _ => todo!(),
+            fn_arg => todo!("FnArg {fn_arg:?}"),
         }
     }
 
-    fn detect_type_type(&self, ty: &mut Type) -> DetectedType {
+    fn detect_type_type(&self, mut ty: &mut Type) -> DetectedType {
+        if let Type::Reference(ref_) = ty {
+            ty = &mut *ref_.elem;
+        }
         match ty {
             Type::Path(TypePath { ref mut path, .. }) => {
                 let mut segment = &mut path.segments[0];
                 if segment.ident.to_string() == "Tensor" {
                     let detected_type = match &mut segment.arguments {
                         PathArguments::AngleBracketed(angle) => self.detect_type_tuple(angle),
-                        PathArguments::None => {
-                            segment
-                                .ident
-                                .span()
-                                .unwrap()
-                                .error("Tensor needs to be annotated.")
-                                .emit();
-                            unreachable!()
-                        }
-
-                        _ => todo!(),
+                        PathArguments::None => DetectedType::NotDetected,
+                        n => todo!("Path arguments {n:?}"),
                     };
                     segment.arguments = PathArguments::None;
                     detected_type
@@ -287,27 +319,36 @@ impl Args {
                     DetectedType::NotTensor
                 }
             }
-            _ => todo!(),
+            ty => todo!("Type {ty:?} not handled yet."),
         }
     }
 
     fn detect_type_tuple(&self, angle: &AngleBracketedGenericArguments) -> DetectedType {
-        assert!(angle.args.len() == 3);
+        assert!(angle.args.len() >= 1);
 
         let shape = if let GenericArgument::Type(shape) = &angle.args[0] {
             self.detect_type_shape(shape)
         } else {
-            todo!()
+            todo!("Could not detect shape")
         };
-        let kind = if let GenericArgument::Type(kind) = &angle.args[1] {
-            self.detect_type_kind(kind)
+
+        let kind = if angle.args.len() > 1 {
+            if let GenericArgument::Type(kind) = &angle.args[1] {
+                self.detect_type_kind(kind)
+            } else {
+                todo!("Could not detect kind")
+            }
         } else {
-            todo!()
+            Kind::Implicit
         };
-        let device = if let GenericArgument::Type(device) = &angle.args[2] {
-            self.detect_type_device(device)
+        let device = if angle.args.len() > 2 {
+            if let GenericArgument::Type(device) = &angle.args[2] {
+                self.detect_type_device(device)
+            } else {
+                todo!("Could not detect device")
+            }
         } else {
-            todo!()
+            Device::Implicit
         };
         DetectedType::Declared(TensorType::new(shape, kind, device))
     }
@@ -341,7 +382,6 @@ impl Args {
     fn detect_type_bound(&self, bound: &TypeParamBound) -> DimExpr {
         match bound {
             TypeParamBound::Trait(traits) => {
-                println!("TRaits {traits:?}");
                 DimExpr::Symbol(traits.path.segments[0].ident.to_string())
             }
             _ => todo!("Finish bound in dim"),
@@ -374,7 +414,7 @@ impl Args {
     }
 
     fn assign_type(&mut self, ident: &Ident, type_: TensorType) {
-        println!("Assigning {ident:?} {type_:?}");
+        println!("Assigning {:?} {type_:?}", ident.to_string());
         self.vars
             .insert(ident.clone(), DetectedType::Inferred(type_));
     }
@@ -421,12 +461,14 @@ enum DimExpr {
 enum Kind {
     Float,
     Symbol(String),
+    Implicit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Device {
     Cpu,
     Symbol(String),
+    Implicit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -493,7 +535,6 @@ impl Fold for Args {
                 // TODO also handle actual `return r;`.
                 match e {
                     Expr::Call(call) => {
-                        println!("{call:#?}");
                         let detected_type = self.detect_type_call(call);
                         if detected_type != self.return_type {
                             e.span().unwrap().error(format!("The return type \"{detected_type:?}\" does not match the expected return type \"{:?}\"", self.return_type)).emit();
@@ -503,6 +544,9 @@ impl Fold for Args {
                                 self.return_type
                             );
                         }
+                    }
+                    Expr::MethodCall(_call) => {
+                        todo!("Handle method calls");
                     }
                     _ => (),
                 }
