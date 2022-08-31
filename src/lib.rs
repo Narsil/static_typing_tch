@@ -246,11 +246,6 @@ impl Args {
                             DetectedType::Inferred(TensorType::new(shape, kind, device))
                         }
                         "cat" => {
-                            // call.func
-                            //     .span()
-                            //     .unwrap()
-                            //     .warning("Cat not handled well yet")
-                            //     .emit();
                             assert!(args.len() == 2);
                             DetectedType::Inferred(self.detect_cat_type(&args[0], &args[1]))
                         }
