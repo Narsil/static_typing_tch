@@ -1,4 +1,5 @@
 #![feature(proc_macro_diagnostic)]
+use log::debug;
 use proc_macro::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
@@ -68,8 +69,114 @@ impl Args {
                     b.span().unwrap().error(error).emit();
                 }
             }
-            Expr::MethodCall(_m) => {
-                todo!("Implement method call");
+            Expr::MethodCall(m) => {
+                let receiver_type = self.get_type(&*m.receiver);
+                match receiver_type {
+                    DetectedType::NotTensor | DetectedType::NotDetected => (),
+                    DetectedType::Inferred(type_) | DetectedType::Declared(type_) => {
+                        let arg_types: Vec<_> =
+                            m.args.iter().map(|item| self.get_type(item)).collect();
+                        match &m.method.to_string()[..] {
+                            "addmm" => {
+                                // Assert shapes
+                                if type_.shape.len() != 2 {
+                                    m.receiver
+                                        .span()
+                                        .unwrap()
+                                        .error(format!(
+                                            "This tensor must be 2 dimensional but found {type_:?}"
+                                        ))
+                                        .emit();
+                                }
+                                assert!(arg_types.len() == 2);
+                                let arg_types: Vec<_> = arg_types
+                                    .into_iter()
+                                    .enumerate()
+                                    .map(|(i, arg_type)| match arg_type {
+                                        DetectedType::Inferred(type_)
+                                        | DetectedType::Declared(type_) => {
+                                            if type_.shape.len() != 2 {
+                                                m.args[i]
+                                                    .span()
+                                                    .unwrap()
+                                                    .error(format!(
+                                            "This tensor must be 2 dimensional but found {type_:?}"
+                                        ))
+                                                    .emit();
+                                            }
+                                            type_
+                                        }
+                                        _ => unreachable!(),
+                                    })
+                                    .collect();
+                                // (U1, N) (B, M) (M, N)
+                                // TODO check bias dim is 1
+                                // for later because 1 vs U1 (should ideally be
+                                // solved directly in the parser
+                                let _u1_bias = &type_.shape[0];
+
+                                let n_bias = &type_.shape[1];
+
+                                let b_arg = &arg_types[0].shape[0];
+                                let m_arg = &arg_types[0].shape[1];
+
+                                let m_weight = &arg_types[1].shape[0];
+                                let n_weight = &arg_types[1].shape[1];
+
+                                if m_arg != m_weight {
+                                    m.args[0]
+                                        .span()
+                                                    .unwrap()
+                                                    .error(format!(
+                                            "Second dim was expected to be {m_weight:?} but found {m_arg:?}")).emit();
+                                }
+                                if n_weight != n_bias {
+                                    m.args[1]
+                                        .span()
+                                                    .unwrap()
+                                                    .error(format!(
+                                            "Second dim was expected to be {n_bias:?} but found {n_weight:?}")).emit();
+                                }
+
+                                // Assert kinds are identical
+                                arg_types.iter().enumerate().for_each(|(i, arg_type)| {
+                                    if type_.kind != arg_type.kind {
+                                        m.args[i]
+                                            .span()
+                                            .unwrap()
+                                            .error(format!(
+                                                "Expected kind {:?} but found {:?}",
+                                                type_.kind, arg_types[0].kind
+                                            ))
+                                            .emit();
+                                    }
+                                });
+
+                                // Assert devices are identical
+                                arg_types.iter().enumerate().for_each(|(i, arg_type)| {
+                                    if type_.device != arg_type.device {
+                                        m.args[i]
+                                            .span()
+                                            .unwrap()
+                                            .error(format!(
+                                                "Expected device {:?} but found {:?}",
+                                                type_.device, arg_types[0].device
+                                            ))
+                                            .emit();
+                                    }
+                                });
+
+                                let outtype = TensorType::new(
+                                    vec![b_arg.clone(), n_weight.clone()],
+                                    type_.kind,
+                                    type_.device,
+                                );
+                                self.assign_type(&ident, outtype);
+                            }
+                            m => todo!("Implement tensor method call {m:?}",),
+                        }
+                    }
+                }
             }
             s => todo!("Other {s:?}"),
         }
@@ -115,7 +222,8 @@ impl Args {
             }
             Expr::Lit(_) => DetectedType::NotTensor,
             Expr::Paren(p) => self.get_type(&*p.expr),
-            expr => todo!("Expr {expr:?}"),
+            Expr::Reference(reference) => self.get_type(&*reference.expr),
+            m => todo!("Expr {m:?}"),
         }
     }
 
@@ -138,11 +246,11 @@ impl Args {
                             DetectedType::Inferred(TensorType::new(shape, kind, device))
                         }
                         "cat" => {
-                            call.func
-                                .span()
-                                .unwrap()
-                                .warning("Cat not handled well yet")
-                                .emit();
+                            // call.func
+                            //     .span()
+                            //     .unwrap()
+                            //     .warning("Cat not handled well yet")
+                            //     .emit();
                             assert!(args.len() == 2);
                             DetectedType::Inferred(self.detect_cat_type(&args[0], &args[1]))
                         }
@@ -414,7 +522,7 @@ impl Args {
     }
 
     fn assign_type(&mut self, ident: &Ident, type_: TensorType) {
-        println!("Assigning {:?} {type_:?}", ident.to_string());
+        debug!("Assigning {:?} {type_:?}", ident.to_string());
         self.vars
             .insert(ident.clone(), DetectedType::Inferred(type_));
     }
@@ -539,7 +647,7 @@ impl Fold for Args {
                         if detected_type != self.return_type {
                             e.span().unwrap().error(format!("The return type \"{detected_type:?}\" does not match the expected return type \"{:?}\"", self.return_type)).emit();
                         } else {
-                            println!(
+                            debug!(
                                 "There is a correct match between {detected_type:?} and {:?}",
                                 self.return_type
                             );
@@ -550,6 +658,7 @@ impl Fold for Args {
                     }
                     _ => (),
                 }
+
                 fold::fold_stmt(self, s)
             }
             _ => fold::fold_stmt(self, s),
