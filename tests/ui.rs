@@ -32,22 +32,22 @@ fn transformer_mlp(
     hidden_states
 }
 
-// #[tensor_check_fn]
-// fn transformer_mlp2(
-//     hidden_states: &Tensor<(B, S, H)>,
-//     dense_h_to_4h: &Tensor<(H, H4)>,
-//     dense_h_to_4h_bias: &Tensor<(U1, H4)>,
-//     dense_4h_to_h: &Tensor<(H4, H)>,
-//     dense_4h_to_h_bias: &Tensor<(U1, H)>,
-// ) -> Tensor<(B, S, H)> {
-//     let size = hidden_states.size();
-//     let hidden_states = hidden_states.view((-1, size[2]));
-//     let hidden_states = dense_h_to_4h_bias.addmm(&hidden_states, &dense_h_to_4h);
-//     let hidden_states = gelu(&hidden_states);
-//     let hidden_states = dense_4h_to_h_bias.addmm(&hidden_states, &dense_4h_to_h);
-//     let hidden_states = hidden_states.view((size[0], size[1], size[2]));
-//     hidden_states
-// }
+#[tensor_check_fn]
+fn transformer_mlp2(
+    hidden_states: &Tensor<(B, S, H)>,
+    dense_h_to_4h: &Tensor<(H, H4)>,
+    dense_h_to_4h_bias: &Tensor<(U1, H4)>,
+    dense_4h_to_h: &Tensor<(H4, H)>,
+    dense_4h_to_h_bias: &Tensor<(U1, H)>,
+) -> Tensor<(B, S, H)> {
+    let size = hidden_states.size();
+    let hidden_states = hidden_states.view((-1, size[2]));
+    let hidden_states = dense_h_to_4h_bias.addmm(&hidden_states, &dense_h_to_4h);
+    let hidden_states = gelu(&hidden_states);
+    let hidden_states = dense_4h_to_h_bias.addmm(&hidden_states, &dense_4h_to_h);
+    let hidden_states = hidden_states.view((size[0], size[1], size[2]));
+    hidden_states
+}
 
 #[test]
 fn concat_tensors() {
@@ -73,11 +73,12 @@ fn attention() {
         &dense_4h_to_h_bias,
     );
 
-    // let _c = transformer_mlp2(
-    //     &hidden_states,
-    //     &dense_h_to_4h,
-    //     &dense_h_to_4h_bias,
-    //     &dense_4h_to_h,
-    //     &dense_4h_to_h_bias,
-    // );
+    let hidden_states = Tensor::ones(&[3, 5, 24], (Kind::Float, Device::Cpu));
+    let _c = transformer_mlp2(
+        &hidden_states,
+        &dense_h_to_4h,
+        &dense_h_to_4h_bias,
+        &dense_4h_to_h,
+        &dense_4h_to_h_bias,
+    );
 }
