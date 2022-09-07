@@ -41,11 +41,11 @@ fn transformer_mlp(
 //     dense_4h_to_h_bias: &Tensor<(U1, H)>,
 // ) -> Tensor<(B, S, H)> {
 //     let size = hidden_states.size();
-//     let hidden_states = hidden_states.view((-1, size[-1]));
+//     let hidden_states = hidden_states.view((-1, size[2]));
 //     let hidden_states = dense_h_to_4h_bias.addmm(&hidden_states, &dense_h_to_4h);
 //     let hidden_states = gelu(&hidden_states);
 //     let hidden_states = dense_4h_to_h_bias.addmm(&hidden_states, &dense_4h_to_h);
-//     let hidden_states = hidden_states.view(size);
+//     let hidden_states = hidden_states.view((size[0], size[1], size[2]));
 //     hidden_states
 // }
 
@@ -72,4 +72,12 @@ fn attention() {
         &dense_4h_to_h,
         &dense_4h_to_h_bias,
     );
+
+    // let _c = transformer_mlp2(
+    //     &hidden_states,
+    //     &dense_h_to_4h,
+    //     &dense_h_to_4h_bias,
+    //     &dense_4h_to_h,
+    //     &dense_4h_to_h_bias,
+    // );
 }

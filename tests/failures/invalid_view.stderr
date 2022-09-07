@@ -1,0 +1,29 @@
+error: Second dim was expected to be Symbol("H") but found Symbol("S")
+  --> tests/failures/invalid_view.rs:12:42
+   |
+12 |     let hidden_states = dense_bias.addmm(&hidden_states, &dense);
+   |                                          ^^^^^^^^^^^^^^
+
+error: This view [Symbol("B"), Symbol("S"), Symbol("H")] is incompatible with tensor shape [Mul([Symbol("B"), Symbol("H")]), Symbol("H4")]
+  --> tests/failures/invalid_view.rs:13:44
+   |
+13 |     let hidden_states = hidden_states.view((size[0], size[1], size[2]));
+   |                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: Second dim was expected to be Symbol("H") but found Mul([Symbol("B"), Symbol("S")])
+  --> tests/failures/invalid_view.rs:25:42
+   |
+25 |     let hidden_states = dense_bias.addmm(&hidden_states, &dense);
+   |                                          ^^^^^^^^^^^^^^
+
+error: This view [Symbol("B"), Symbol("S"), Symbol("H")] is incompatible with tensor shape [Symbol("H"), Symbol("H4")]
+  --> tests/failures/invalid_view.rs:26:44
+   |
+26 |     let hidden_states = hidden_states.view((size[0], size[1], size[2]));
+   |                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: This view [Symbol("B"), Symbol("S")] is incompatible with tensor shape [Mul([Symbol("B"), Symbol("S")]), Symbol("H4")]
+  --> tests/failures/invalid_view.rs:39:44
+   |
+39 |     let hidden_states = hidden_states.view((size[0], size[1])); // Error here missing 1 dim
+   |                                            ^^^^^^^^^^^^^^^^^^

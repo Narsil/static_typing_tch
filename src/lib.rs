@@ -1,10 +1,13 @@
 #![feature(proc_macro_diagnostic)]
+mod tensor_type;
+use crate::tensor_type::{Device, Dim, Kind, TensorType};
 use log::debug;
 use proc_macro::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
 use syn::fold::{self, Fold};
 use syn::spanned::Spanned;
+use syn::UnOp::Neg;
 use syn::{
     parse_macro_input, parse_quote, AngleBracketedGenericArguments, Expr, ExprArray, ExprCall,
     ExprPath, ExprTuple, FnArg, GenericArgument, Ident, ItemFn, Lit, Local, Pat, PatType,
@@ -20,6 +23,7 @@ struct Args {
 enum DetectedType {
     NotDetected,
     NotTensor,
+    Shape(Vec<Dim>),
     Inferred(TensorType),
     Declared(TensorType),
 }
@@ -47,7 +51,7 @@ impl Args {
                     let name = &p.ident;
                     let pat_type = self.detect_type_type(&mut t.ty);
                     if let DetectedType::Inferred(t) = pat_type {
-                        self.assign_type(name, t);
+                        self.assign_type(name, DetectedType::Inferred(t));
                     }
                     &p.ident
                 } else {
@@ -72,6 +76,7 @@ impl Args {
             Expr::MethodCall(m) => {
                 let receiver_type = self.get_type(&*m.receiver);
                 match receiver_type {
+                    DetectedType::Shape(shape) => todo!("Shape {shape:?}"),
                     DetectedType::NotTensor | DetectedType::NotDetected => (),
                     DetectedType::Inferred(type_) | DetectedType::Declared(type_) => {
                         let arg_types: Vec<_> =
@@ -171,6 +176,16 @@ impl Args {
                                     type_.kind,
                                     type_.device,
                                 );
+                                self.assign_type(&ident, DetectedType::Inferred(outtype));
+                            }
+                            "view" => {
+                                assert!(m.args.len() == 1);
+                                let outtype = self.detect_view_shape(&type_, &m.args[0]);
+                                self.assign_type(&ident, DetectedType::Inferred(outtype));
+                            }
+                            "size" => {
+                                let shape = type_.shape;
+                                let outtype = DetectedType::Shape(shape);
                                 self.assign_type(&ident, outtype);
                             }
                             m => todo!("Implement tensor method call {m:?}",),
@@ -183,6 +198,87 @@ impl Args {
         let init = self.fold_expr(expr);
         parse_quote! {
             let #pat =#init;
+        }
+    }
+
+    fn detect_view_shape(&self, type_: &TensorType, view_arg: &Expr) -> TensorType {
+        if let Expr::Tuple(tuple) = view_arg {
+            // TODO fuse into 1 item with Option ?
+            let mut filler = Dim::Mul(type_.shape.iter().map(|d| d.clone()).collect());
+            let mut filler_used = false;
+            let newshape: Vec<Option<Dim>> = tuple
+                .elems
+                .iter()
+                .map(|elem| -> Option<Dim> {
+                    match elem{
+                        Expr::Unary(unary) => {
+                            match (unary.op, &*unary.expr){
+                                (Neg(_), Expr::Lit(expr)) =>match &expr.lit {
+                     Lit::Int(int) => if int.base10_digits() == "1"{
+                                        if filler_used{
+                                            elem.span().unwrap().error("-1 already used, it can be used only once per view call");
+                                        }
+                                        filler_used= true;
+                                        None
+                    }else{
+                        todo!("Else ! ")
+                    },
+                    _ => panic!("Can't handle non int cat"),
+                                        },
+                                        n => todo!("Detect view shape {n:?}")
+                                    }
+                                }
+                        Expr::Index(index) => {
+                            let tensor = self.get_type(&index.expr);
+                            match (tensor, &*index.index){
+                                (DetectedType::Shape(shape), Expr::Lit(expr_lit)) => {
+                                    match &expr_lit.lit{
+                                        Lit::Int(int) => {
+                                    let int: usize = int.base10_parse().unwrap();
+                                    if int >= shape.len(){
+                                        int.span().unwrap().error("This index is invalid for this shape").emit();
+                                    }
+                                    let dim = shape[int].clone();
+                                    filler.divide_by(dim.clone());
+                                    Some(dim)
+                                        },
+                                        n => todo!("detect view shape lit {n:?}" )
+                                        }
+
+                                }
+                                n => todo!("detect view shape AA {n:?}")
+                            }
+                        }
+                                n => todo!("Detect view shape expr {n:?}")
+                    }
+                })
+            .collect();
+            filler.simplify();
+            let newshape: Vec<Dim> = newshape
+                .into_iter()
+                .map(|elem| {
+                    if let Some(elem) = elem {
+                        elem
+                    } else {
+                        filler.clone()
+                    }
+                })
+                .collect();
+
+            let newtype = TensorType::new(newshape, type_.kind.clone(), type_.device.clone());
+            if !newtype.is_view_compatible(type_) {
+                view_arg
+                    .span()
+                    .unwrap()
+                    .error(format!(
+                        "This view {:?} is incompatible with tensor shape {:?}",
+                        newtype.shape, type_.shape
+                    ))
+                    .emit();
+            }
+            newtype
+        } else {
+            todo!("detect view shape {view_arg:?}")
         }
     }
 
@@ -223,6 +319,7 @@ impl Args {
             Expr::Lit(_) => DetectedType::NotTensor,
             Expr::Paren(p) => self.get_type(&*p.expr),
             Expr::Reference(reference) => self.get_type(&*reference.expr),
+            Expr::Tuple(_tuple) => DetectedType::NotDetected,
             m => todo!("Expr {m:?}"),
         }
     }
@@ -230,7 +327,7 @@ impl Args {
     fn maybe_assign_type(&mut self, ident: &Ident, call: &ExprCall) {
         let detected_type = self.detect_type_call(call);
         if let DetectedType::Inferred(type_) = detected_type {
-            self.assign_type(&ident, type_);
+            self.assign_type(&ident, DetectedType::Inferred(type_));
         }
     }
 
@@ -299,12 +396,11 @@ impl Args {
                     if i != dim {
                         assert!(dim_acc == dim_it);
                     } else {
-                        match &mut dim_acc.expr {
-                            DimExpr::Add(a) => a.push(dim_it.expr.clone()),
-                            n => {
-                                dim_acc.expr = DimExpr::Add(vec![n.clone(), dim_it.expr.clone()]);
-                            }
-                        };
+                        if let Dim::Add(a) = dim_acc {
+                            a.push(dim_it.clone());
+                        } else {
+                            *dim_acc = Dim::Add(vec![dim_acc.clone(), dim_it.clone()]);
+                        }
                     }
                 }
                 accum
@@ -471,7 +567,7 @@ impl Args {
         match type_ {
             Type::Path(path) => Dim::from_symbol(path.path.segments[0].ident.to_string()),
             Type::TraitObject(object) => {
-                let dims: Vec<DimExpr> = object
+                let dims: Vec<Dim> = object
                     .bounds
                     .iter()
                     .map(|bound| self.detect_type_bound(bound))
@@ -482,11 +578,9 @@ impl Args {
         }
     }
 
-    fn detect_type_bound(&self, bound: &TypeParamBound) -> DimExpr {
+    fn detect_type_bound(&self, bound: &TypeParamBound) -> Dim {
         match bound {
-            TypeParamBound::Trait(traits) => {
-                DimExpr::Symbol(traits.path.segments[0].ident.to_string())
-            }
+            TypeParamBound::Trait(traits) => Dim::Symbol(traits.path.segments[0].ident.to_string()),
             _ => todo!("Finish bound in dim"),
         }
     }
@@ -516,10 +610,9 @@ impl Args {
         }
     }
 
-    fn assign_type(&mut self, ident: &Ident, type_: TensorType) {
-        debug!("Assigning {:?} {type_:?}", ident.to_string());
-        self.vars
-            .insert(ident.clone(), DetectedType::Inferred(type_));
+    fn assign_type(&mut self, ident: &Ident, type_: DetectedType) {
+        debug!("Assigning shape {:?} {type_:?}", ident.to_string());
+        self.vars.insert(ident.clone(), type_);
     }
 
     fn assign_return_type(&mut self, type_: TensorType) {
@@ -529,66 +622,6 @@ impl Args {
 fn compatible(left: &DetectedType, right: &DetectedType) -> bool {
     left == right
     // TODO
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Dim {
-    expr: DimExpr,
-}
-
-impl Dim {
-    pub fn from_num(n: usize) -> Self {
-        let expr = DimExpr::Value(n);
-        Self { expr }
-    }
-
-    pub fn from_symbol(symbol: String) -> Self {
-        let expr = DimExpr::Symbol(symbol);
-        Self { expr }
-    }
-
-    pub fn from_add(dims: Vec<DimExpr>) -> Self {
-        let expr = DimExpr::Add(dims);
-        Self { expr }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum DimExpr {
-    Value(usize),
-    Add(Vec<DimExpr>),
-    Symbol(String),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Kind {
-    Float,
-    Symbol(String),
-    Implicit,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Device {
-    Cpu,
-    Symbol(String),
-    Implicit,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct TensorType {
-    shape: Vec<Dim>,
-    kind: Kind,
-    device: Device,
-}
-
-impl TensorType {
-    pub fn new(shape: Vec<Dim>, kind: Kind, device: Device) -> Self {
-        Self {
-            shape,
-            kind,
-            device,
-        }
-    }
 }
 
 /// The `Fold` trait is a way to traverse an owned syntax tree and replace some
@@ -608,7 +641,7 @@ impl Fold for Args {
         let (name, actual_type, detected_type): (Ident, Type, DetectedType) =
             self.detect_type_arg(s);
         if let DetectedType::Declared(tensor_type) = detected_type {
-            self.assign_type(&name, tensor_type);
+            self.assign_type(&name, DetectedType::Declared(tensor_type));
         }
         parse_quote!(#name: #actual_type)
     }
