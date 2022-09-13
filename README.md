@@ -41,7 +41,7 @@ addition will fail.
     let a = Tensor::ones(&[2, 3], (Kind::Float, Device::Cpu));
     let b = Tensor::ones(&[3, 2], (Kind::Float, Device::Cpu));
 
-    let _c = a + b;
+    let c = a + b;
     }
 ```
 
