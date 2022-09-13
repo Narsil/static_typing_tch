@@ -5,18 +5,20 @@ use syn::fold::{self, Fold};
 use syn::spanned::Spanned;
 use syn::UnOp::Neg;
 use syn::{
-    parse_quote, AngleBracketedGenericArguments, Expr, ExprArray, ExprCall, ExprPath, ExprTuple,
-    FnArg, GenericArgument, Ident, Lit, Local, Pat, PatType, PathArguments, ReturnType, Stmt, Type,
-    TypeParamBound, TypePath,
+    parse_quote, AngleBracketedGenericArguments, BinOp, Expr, ExprArray, ExprCall, ExprPath,
+    ExprTuple, FnArg, GenericArgument, Ident, Lit, Local, Pat, PatType, PathArguments, ReturnType,
+    Stmt, Type, TypeParamBound, TypePath,
 };
 
 pub struct Args {
     vars: HashMap<Ident, DetectedType>,
+    fns: HashMap<Ident, Signature>,
+    args: Vec<DetectedType>,
     return_type: DetectedType,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum DetectedType {
+pub enum DetectedType {
     NotDetected,
     NotTensor,
     Shape(Vec<Dim>),
@@ -24,16 +26,42 @@ enum DetectedType {
     Declared(TensorType),
 }
 
-impl Args {
-    pub fn new() -> Self {
-        Self {
-            vars: HashMap::new(),
-            return_type: DetectedType::NotDetected,
+impl DetectedType {
+    pub fn is_arg_compatible(&self, other: &DetectedType) -> bool {
+        match (self, other) {
+            (
+                DetectedType::Inferred(left) | DetectedType::Declared(left),
+                DetectedType::Inferred(right) | DetectedType::Declared(right),
+            ) => left.is_arg_compatible(right),
+            n => todo!("Handle {n:?}"),
         }
     }
 }
 
 impl Args {
+    pub fn new(fns: HashMap<Ident, Signature>) -> Self {
+        Self {
+            vars: HashMap::new(),
+            return_type: DetectedType::NotDetected,
+            args: vec![],
+            fns,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Signature {
+    args: Vec<DetectedType>,
+    return_type: DetectedType,
+}
+
+impl Args {
+    pub fn signature(self) -> Signature {
+        Signature {
+            args: self.args,
+            return_type: self.return_type,
+        }
+    }
     fn let_and_print(&mut self, local: Local) -> Stmt {
         let Local { mut pat, init, .. } = local;
         let expr = *init.unwrap().1;
@@ -57,7 +85,15 @@ impl Args {
             n => todo!("let and print {n:?}"),
         };
         match &expr {
-            Expr::Call(m) => self.maybe_assign_type(&ident, m),
+            Expr::Call(m) => {
+                if let Expr::Path(p) = &*m.func {
+                    let ident = &p.path.segments[0].ident;
+                    if let Some(sig) = self.fns.get(ident) {
+                        self.check_valid_call(&m, sig);
+                    }
+                }
+                self.maybe_assign_type(&ident, m)
+            }
             Expr::Binary(b) => {
                 let detected_left = self.get_type(&b.left);
                 let detected_right = self.get_type(&b.right);
@@ -195,6 +231,39 @@ impl Args {
         parse_quote! {
             let #pat =#init;
         }
+    }
+
+    fn get_signature_arg(&self, expr: &Expr) -> DetectedType {
+        match expr {
+            Expr::Reference(reference) => self.get_signature_arg(&*reference.expr),
+            Expr::Path(path) => {
+                assert!(path.path.segments.len() == 1);
+                self.vars
+                    .get(&path.path.segments[0].ident)
+                    .unwrap_or(&DetectedType::NotDetected)
+                    .clone()
+            }
+            n => todo!("get_signature_arg {n:?}"),
+        }
+    }
+
+    fn check_valid_call(&self, expr_call: &ExprCall, sig: &Signature) {
+        let args = &sig.args;
+
+        args.iter()
+            .zip(expr_call.args.iter())
+            .for_each(|(arg, current_arg)| {
+                let arg_type = self.get_signature_arg(current_arg);
+                if !arg_type.is_arg_compatible(arg) {
+                    current_arg
+                        .span()
+                        .unwrap()
+                        .error(format!(
+                            "This call is invalid, expected {arg:#?} but got {arg_type:#?}"
+                        ))
+                        .emit();
+                }
+            })
     }
 
     fn detect_view_shape(&self, type_: &TensorType, view_arg: &Expr) -> TensorType {
@@ -335,6 +404,11 @@ impl Args {
                     match &expr.path.segments[1].ident.to_string()[..] {
                         "ones" | "zeros" => {
                             let shape: Vec<Dim> = self.detect_shape(&args[0]);
+                            // args[0]
+                            //     .span()
+                            //     .unwrap()
+                            //     .warning(format!("Shape {shape:?}"))
+                            //     .emit();
                             let (kind, device) = self.detect_kind_device(&args[1]);
                             DetectedType::Inferred(TensorType::new(shape, kind, device))
                         }
@@ -426,22 +500,30 @@ impl Args {
             expr => todo!("Expr detect type {expr:?}"),
         }
     }
+    fn detect_dim(&self, expr: &Expr) -> Dim {
+        match expr {
+            Expr::Lit(expr_lit) => match &expr_lit.lit {
+                Lit::Int(lit_int) => Dim::from_num(lit_int.base10_parse().unwrap()),
+                lit => todo!("Detect shape lit {lit:?}"),
+            },
+            Expr::Binary(expr_bin) => match expr_bin.op {
+                BinOp::Mul(_) => {
+                    let left = self.detect_dim(&*expr_bin.left);
+                    let right = self.detect_dim(&*expr_bin.right);
+                    left * right
+                }
+                n => todo!("detect shape operator {n:?}"),
+            },
+            n => todo!("detect shape Handle {n:?}"),
+        }
+    }
 
     fn detect_shape(&self, expr: &Expr) -> Vec<Dim> {
         match expr {
             Expr::Reference(expr_ref) => match &*expr_ref.expr {
-                Expr::Array(ExprArray { elems, .. }) => elems
-                    .iter()
-                    .filter_map(|elem| match elem {
-                        Expr::Lit(expr_lit) => match &expr_lit.lit {
-                            Lit::Int(lit_int) => {
-                                Some(Dim::from_num(lit_int.base10_parse().unwrap()))
-                            }
-                            lit => todo!("Detect shape lit {lit:?}"),
-                        },
-                        _ => None,
-                    })
-                    .collect(),
+                Expr::Array(ExprArray { elems, .. }) => {
+                    elems.iter().map(|elem| self.detect_dim(elem)).collect()
+                }
                 expr => todo!("Detect shape2 {expr:?}"),
             },
             expr => todo!("Detect shape {expr:?}"),
@@ -610,10 +692,6 @@ impl Args {
         debug!("Assigning shape {:?} {type_:?}", ident.to_string());
         self.vars.insert(ident.clone(), type_);
     }
-
-    fn assign_return_type(&mut self, type_: TensorType) {
-        self.return_type = DetectedType::Inferred(type_);
-    }
 }
 fn compatible(left: &DetectedType, right: &DetectedType) -> bool {
     left == right
@@ -636,6 +714,7 @@ impl Fold for Args {
     fn fold_fn_arg(&mut self, s: FnArg) -> FnArg {
         let (name, actual_type, detected_type): (Ident, Type, DetectedType) =
             self.detect_type_arg(s);
+        self.args.push(detected_type.clone());
         if let DetectedType::Declared(tensor_type) = detected_type {
             self.assign_type(&name, DetectedType::Declared(tensor_type));
         }
@@ -644,8 +723,12 @@ impl Fold for Args {
 
     fn fold_return_type(&mut self, s: ReturnType) -> ReturnType {
         let (actual_type, detected_type) = self.detect_type_return(s);
-        if let DetectedType::Declared(tensor_type) = detected_type {
-            self.assign_return_type(tensor_type);
+        if let DetectedType::Declared(type_) = detected_type {
+            // TODO modify this so that Eq actually validates
+            // Inferred == Declared
+            self.return_type = DetectedType::Inferred(type_);
+        } else {
+            self.return_type = detected_type;
         }
         if let Some(actual_type) = actual_type {
             parse_quote!(-> #actual_type)

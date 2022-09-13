@@ -13,7 +13,7 @@ fn concat_1(left: Tensor<(B, S1)>, right: Tensor<(B, S2)>) -> Tensor<(B, S1 + S2
     Tensor::cat(&[left, right], 1)
 }
 
-fn gelu(x: &Tensor<(B, S, H)>) -> Tensor<(B, S, H)> {
+fn gelu(x: &Tensor<(BS, H)>) -> Tensor<(BS, H)> {
     let y: Tensor = 0.79788456 * x * (1.0 + 0.044715 * x * x);
     x * 0.5 * (1.0 + y.tanh())
 }

@@ -1,0 +1,34 @@
+error: This call is invalid, expected Declared(
+           TensorType {
+               shape: [
+                   Symbol(
+                       "B",
+                   ),
+                   Symbol(
+                       "S",
+                   ),
+                   Symbol(
+                       "H",
+                   ),
+               ],
+               kind: Implicit,
+               device: Implicit,
+           },
+       ) but got Inferred(
+           TensorType {
+               shape: [
+                   Value(
+                       3,
+                   ),
+                   Value(
+                       24,
+                   ),
+               ],
+               kind: Float,
+               device: Cpu,
+           },
+       )
+  --> tests/failures/invalid_call.rs:13:31
+   |
+13 |     let _hidden_states = gelu(&hidden_states);
+   |                               ^^^^^^^^^^^^^^

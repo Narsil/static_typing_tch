@@ -1,13 +1,12 @@
-use static_typing_tch::tensor_check_fn;
+use static_typing_tch::tensor_check;
 use tch::Tensor;
 
-#[tensor_check_fn]
-fn gelu(x: &Tensor<(B, S, H)>) -> Tensor<(B, S, H)> {
+tensor_check! {
+fn gelu(x: &Tensor<(BS, H)>) -> Tensor<(BS, H)> {
     let y: Tensor = 0.79788456 * x * (1.0 + 0.044715 * x * x);
     x * 0.5 * (1.0 + y.tanh())
 }
 
-#[tensor_check_fn]
 fn transformer_mlp(
     hidden_states: &Tensor<(BS, H)>,
     dense_h_to_4h: &Tensor<(H, H4)>,
@@ -21,7 +20,6 @@ fn transformer_mlp(
     hidden_states
 }
 
-#[tensor_check_fn]
 fn transformer_mlp2(
     hidden_states: &Tensor<(BS, H)>,
     dense_h_to_4h: &Tensor<(H, H4)>,
@@ -36,7 +34,6 @@ fn transformer_mlp2(
     hidden_states
 }
 
-#[tensor_check_fn]
 fn transformer_mlp3(
     hidden_states: &Tensor<(B, S, H)>,
     dense_h_to_4h: &Tensor<(H, H4)>,
@@ -56,3 +53,4 @@ fn transformer_mlp3(
 }
 
 fn main() {}
+}

@@ -1,41 +1,41 @@
 error: Second dim was expected to be Symbol("H3") but found Symbol("H4")
-  --> tests/failures/invalid_addmm.rs:20:50
+  --> tests/failures/invalid_addmm.rs:19:50
    |
-20 |     let hidden_states = dense_4h_to_h_bias.addmm(&hidden_states, &dense_4h_to_h);
+19 |     let hidden_states = dense_4h_to_h_bias.addmm(&hidden_states, &dense_4h_to_h);
    |                                                  ^^^^^^^^^^^^^^
 
 error: Second dim was expected to be Symbol("H") but found Symbol("H4")
-  --> tests/failures/invalid_addmm.rs:34:50
+  --> tests/failures/invalid_addmm.rs:32:50
    |
-34 |     let hidden_states = dense_4h_to_h_bias.addmm(&hidden_states, &dense_h_to_4h); // Dimension mismatch wrong argument
+32 |     let hidden_states = dense_4h_to_h_bias.addmm(&hidden_states, &dense_h_to_4h); // Dimension mismatch wrong argument
    |                                                  ^^^^^^^^^^^^^^
 
 error: Second dim was expected to be Symbol("H") but found Symbol("H4")
-  --> tests/failures/invalid_addmm.rs:34:66
+  --> tests/failures/invalid_addmm.rs:32:66
    |
-34 |     let hidden_states = dense_4h_to_h_bias.addmm(&hidden_states, &dense_h_to_4h); // Dimension mismatch wrong argument
+32 |     let hidden_states = dense_4h_to_h_bias.addmm(&hidden_states, &dense_h_to_4h); // Dimension mismatch wrong argument
    |                                                                  ^^^^^^^^^^^^^^
 
 error: This tensor must be 2 dimensional but found TensorType { shape: [Symbol("B"), Symbol("S"), Symbol("H")], kind: Implicit, device: Implicit }
-  --> tests/failures/invalid_addmm.rs:47:50
+  --> tests/failures/invalid_addmm.rs:44:50
    |
-47 |     let hidden_states = dense_h_to_4h_bias.addmm(&hidden_states, &dense_h_to_4h); //Mismatch addmm
+44 |     let hidden_states = dense_h_to_4h_bias.addmm(&hidden_states, &dense_h_to_4h); //Mismatch addmm
    |                                                  ^^^^^^^^^^^^^^
 
 error: Second dim was expected to be Symbol("H") but found Symbol("S")
-  --> tests/failures/invalid_addmm.rs:47:50
+  --> tests/failures/invalid_addmm.rs:44:50
    |
-47 |     let hidden_states = dense_h_to_4h_bias.addmm(&hidden_states, &dense_h_to_4h); //Mismatch addmm
+44 |     let hidden_states = dense_h_to_4h_bias.addmm(&hidden_states, &dense_h_to_4h); //Mismatch addmm
    |                                                  ^^^^^^^^^^^^^^
 
 error: Second dim was expected to be Symbol("H") but found Symbol("H4")
-  --> tests/failures/invalid_addmm.rs:53:50
+  --> tests/failures/invalid_addmm.rs:50:50
    |
-53 |     let hidden_states = dense_4h_to_h_bias.addmm(&hidden_states, &dense_h_to_4h);
+50 |     let hidden_states = dense_4h_to_h_bias.addmm(&hidden_states, &dense_h_to_4h);
    |                                                  ^^^^^^^^^^^^^^
 
 error: Second dim was expected to be Symbol("H") but found Symbol("H4")
-  --> tests/failures/invalid_addmm.rs:53:66
+  --> tests/failures/invalid_addmm.rs:50:66
    |
-53 |     let hidden_states = dense_4h_to_h_bias.addmm(&hidden_states, &dense_h_to_4h);
+50 |     let hidden_states = dense_4h_to_h_bias.addmm(&hidden_states, &dense_h_to_4h);
    |                                                                  ^^^^^^^^^^^^^^

@@ -1,7 +1,7 @@
-use static_typing_tch::tensor_check_fn;
+use static_typing_tch::tensor_check;
 use tch::Tensor;
 
-#[tensor_check_fn]
+tensor_check! {
 fn transformer_mlp(
     hidden_states: &Tensor<(B, S, H)>,
     dense: &Tensor<(H, H4)>,
@@ -14,7 +14,6 @@ fn transformer_mlp(
     hidden_states
 }
 
-#[tensor_check_fn]
 fn transformer_mlp2(
     hidden_states: &Tensor<(B, S, H)>,
     dense: &Tensor<(H, H4)>,
@@ -27,7 +26,6 @@ fn transformer_mlp2(
     hidden_states
 }
 
-#[tensor_check_fn]
 fn transformer_mlp3(
     hidden_states: &Tensor<(B, S, H)>,
     dense: &Tensor<(H, H4)>,
@@ -41,3 +39,4 @@ fn transformer_mlp3(
 }
 
 fn main() {}
+}

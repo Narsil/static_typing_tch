@@ -22,6 +22,22 @@ impl Dim {
     }
 }
 
+impl std::ops::Mul for Dim {
+    type Output = Dim;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        let mut dim = Dim::Mul(vec![self.clone(), rhs]);
+        dim.simplify();
+        dim
+    }
+}
+
+pub trait Mul<Rhs = Self> {
+    type Output;
+
+    fn mul(self, rhs: Rhs) -> Self::Output;
+}
+
 impl Dim {
     pub fn divide_by(&mut self, expr: Dim) {
         *self = Dim::Mul(vec![self.clone(), Dim::Inv(Box::new(expr))])
@@ -183,6 +199,15 @@ impl TensorType {
             shape,
             kind,
             device,
+        }
+    }
+
+    pub fn is_arg_compatible(&self, other: &TensorType) -> bool {
+        if self.shape.len() != other.shape.len() {
+            false
+        } else {
+            // TODO handle implicit and actual tensor shapes
+            true
         }
     }
 
