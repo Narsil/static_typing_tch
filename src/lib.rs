@@ -21,7 +21,7 @@
 //! can also liberally be more accepting of the actual syntax (since we can rewrite the code
 //! afterwards to actually fit the Rust compiler).
 //! The biggest drawback is that a LOT of the type checker has to be reimplemented with
-//! type detection, call detection so on and so force. The main thing that makes this approach possible
+//! type detection, call detection so on and so forth. The main thing that makes this approach possible
 //! is that the amount of method calls and functions are actually relatively limited.
 //!
 //! Let me know if you find any example/case which *cannot* ever be solved by this approach.
