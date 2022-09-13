@@ -64,4 +64,4 @@ an actual algebraic solver to work.
   }
 ```
 
-[More examples]<https://github.com/Narsil/static_typing_tch/tree/main/tests/failures>
+[More examples](https://github.com/Narsil/static_typing_tch/tree/main/tests/failures)
