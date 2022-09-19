@@ -14,16 +14,16 @@ fn concat_1(left: Tensor<(B, S1)>, right: Tensor<(B, S2)>) -> Tensor<(B, S1 + S2
 }
 
 fn gelu(x: &Tensor<(BS, H)>) -> Tensor<(BS, H)> {
-    let y: Tensor = 0.79788456 * x * (1.0 + 0.044715 * x * x);
+    let y: Tensor<(BS, H)> = 0.79788456 * x * (1.0 + 0.044715 * x * x);
     x * 0.5 * (1.0 + y.tanh())
 }
 
 fn transformer_mlp(
     hidden_states: &Tensor<(BS, H)>,
     dense_h_to_4h: &Tensor<(H, H4)>,
-    dense_h_to_4h_bias: &Tensor<(U1, H4)>,
+    dense_h_to_4h_bias: &Tensor<(H4, )>,
     dense_4h_to_h: &Tensor<(H4, H)>,
-    dense_4h_to_h_bias: &Tensor<(U1, H)>,
+    dense_4h_to_h_bias: &Tensor<(H, )>,
 ) -> Tensor<(B, S, H)> {
     let hidden_states = dense_h_to_4h_bias.addmm(&hidden_states, &dense_h_to_4h);
     let hidden_states = gelu(&hidden_states);
@@ -34,9 +34,9 @@ fn transformer_mlp(
 fn transformer_mlp2(
     hidden_states: &Tensor<(B, S, H)>,
     dense_h_to_4h: &Tensor<(H, H4)>,
-    dense_h_to_4h_bias: &Tensor<(U1, H4)>,
+    dense_h_to_4h_bias: &Tensor<(H4, )>,
     dense_4h_to_h: &Tensor<(H4, H)>,
-    dense_4h_to_h_bias: &Tensor<(U1, H)>,
+    dense_4h_to_h_bias: &Tensor<(H, )>,
 ) -> Tensor<(B, S, H)> {
     let size = hidden_states.size();
     let hidden_states = hidden_states.view((-1, size[2]));
@@ -58,10 +58,10 @@ fn concat_tensors() {
 fn attention() {
     let hidden_states = Tensor::ones(&[3 * 5, 24], (Kind::Float, Device::Cpu));
     let dense_h_to_4h = Tensor::ones(&[24, 4 * 24], (Kind::Float, Device::Cpu));
-    let dense_h_to_4h_bias = Tensor::ones(&[1, 4 * 24], (Kind::Float, Device::Cpu));
+    let dense_h_to_4h_bias = Tensor::ones(&[4 * 24], (Kind::Float, Device::Cpu));
 
     let dense_4h_to_h = Tensor::ones(&[4 * 24, 24], (Kind::Float, Device::Cpu));
-    let dense_4h_to_h_bias = Tensor::ones(&[1, 24], (Kind::Float, Device::Cpu));
+    let dense_4h_to_h_bias = Tensor::ones(&[24], (Kind::Float, Device::Cpu));
 
     let _c = transformer_mlp(
         &hidden_states,

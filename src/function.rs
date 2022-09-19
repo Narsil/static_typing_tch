@@ -103,7 +103,7 @@ impl Args {
                         match &m.method.to_string()[..] {
                             "addmm" => {
                                 // Assert shapes
-                                if type_.shape.len() != 2 {
+                                if type_.shape.len() != 1 {
                                     m.receiver
                                         .span()
                                         .unwrap()
@@ -137,9 +137,7 @@ impl Args {
                                 // TODO check bias dim is 1
                                 // for later because 1 vs U1 (should ideally be
                                 // solved directly in the parser
-                                let _u1_bias = &type_.shape[0];
-
-                                let n_bias = &type_.shape[1];
+                                let n_bias = &type_.shape[0];
 
                                 let b_arg = &arg_types[0].shape[0];
                                 let m_arg = &arg_types[0].shape[1];
@@ -212,7 +210,11 @@ impl Args {
                     }
                 }
             }
-            s => todo!("Other {s:?}"),
+            s => {
+                s.span().unwrap().warning(format!("Unhandled")).emit();
+
+                // todo!("Other {s:?}")
+            }
         }
         let init = self.fold_expr(expr);
         parse_quote! {
@@ -372,11 +374,27 @@ impl Args {
             Expr::Paren(p) => self.get_type(&*p.expr),
             Expr::Reference(reference) => self.get_type(&*reference.expr),
             Expr::Tuple(_tuple) => DetectedType::NotDetected,
-            // TODO
-            Expr::MethodCall(_tuple) => DetectedType::NotDetected,
-            // TODO
+            // // TODO
             Expr::Call(_tuple) => DetectedType::NotTensor,
-            m => todo!("Expr {m:?}"),
+            Expr::Field(field) => {
+                if let Some(current_self) = &self.current_self {
+                    if let Some(struct_) = self.module.structs.get(current_self) {
+                        if let Member::Named(name) = &field.member {
+                            if let Some(type_) = struct_.members.get(name) {
+                                return DetectedType::Inferred(type_.clone());
+                            }
+                        }
+                    }
+                }
+                field.span().unwrap().error("Expr Field").emit();
+                DetectedType::NotTensor
+            }
+            Expr::MethodCall(expr) => self.detect_type_method_call(expr),
+            m => {
+                m.span().unwrap().warning("Expr").emit();
+                // DetectedType::NotDetected
+                todo!("Expr {m:?}")
+            }
         }
     }
 
@@ -435,6 +453,55 @@ impl Args {
                             x.kind.clone(),
                             x.device.clone(),
                         ))
+                    }
+                    "addmm" => {
+                        assert!(call.args.len() == 2);
+                        let bias = x;
+                        let x = self.detect_type(&call.args[0]);
+                        let weight_type = self.detect_type(&call.args[1]);
+
+                        if x.kind != weight_type.kind {
+                            call.args[0]
+                                .span()
+                                .unwrap()
+                                .error("Mismatched types expected {x:?} but found {weight_type:?}")
+                                .emit();
+                        }
+                        if bias.kind != weight_type.kind {
+                            call.args[1]
+                                .span()
+                                .unwrap()
+                                .error(
+                                    "Mismatched types expected {weight_type:?} but found {bias:?}",
+                                )
+                                .emit();
+                        }
+                        if x.device != weight_type.device {
+                            call.args[0]
+                                .span()
+                                .unwrap()
+                                .error("Mismatched types expected {x:?} but found {weight_type:?}")
+                                .emit();
+                        }
+                        if bias.kind != weight_type.kind {
+                            call.args[1]
+                                .span()
+                                .unwrap()
+                                .error(
+                                    "Mismatched types expected {weight_type:?} but found {bias:?}",
+                                )
+                                .emit();
+                        }
+                        let outshape = vec![x.shape[0].clone(), weight_type.shape[1].clone()];
+                        DetectedType::Inferred(TensorType::new(
+                            outshape,
+                            x.kind.clone(),
+                            x.device.clone(),
+                        ))
+                    }
+                    "view" => {
+                        let outtype = self.detect_view_shape(&x, &call.args[0]);
+                        DetectedType::Inferred(outtype)
                     }
                     n => todo!("Method call {n:?}"),
                 }

@@ -3,7 +3,7 @@ use tch::{kind::Kind, Device, Tensor};
 
 tensor_check! {
 fn gelu(x: &Tensor<(B, S, H)>) -> Tensor<(B, S, H)> {
-    let y: Tensor = 0.79788456 * x * (1.0 + 0.044715 * x * x);
+    let y: Tensor<(B, S, H)> = 0.79788456 * x * (1.0 + 0.044715 * x * x);
     x * 0.5 * (1.0 + y.tanh())
 }
 

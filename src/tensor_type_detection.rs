@@ -33,7 +33,15 @@ pub fn detect_type_type(mut ty: &mut Type) -> DetectedType {
             if segment.ident.to_string() == "Tensor" {
                 let detected_type = match &mut segment.arguments {
                     PathArguments::AngleBracketed(angle) => detect_type_tuple(angle),
-                    PathArguments::None => DetectedType::NotDetected,
+                    PathArguments::None => {
+                        segment
+                            .ident
+                            .span()
+                            .unwrap()
+                            .error("Missing shape hint")
+                            .emit();
+                        DetectedType::NotDetected
+                    }
                     n => todo!("Path arguments {n:?}"),
                 };
                 segment.arguments = PathArguments::None;

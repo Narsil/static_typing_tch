@@ -42,8 +42,8 @@ impl Module {
             .fields
             .iter_mut()
             .flat_map(|field| {
-                if let (Some(ident), DetectedType::Declared(tensor_type)) =
-                    (&field.ident, detect_type_type(&mut field.ty))
+                let detected = detect_type_type(&mut field.ty);
+                if let (Some(ident), DetectedType::Declared(tensor_type)) = (&field.ident, detected)
                 {
                     Some((ident.clone(), tensor_type))
                 } else {
