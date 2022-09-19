@@ -1,51 +1,38 @@
 use crate::tensor_type::{Device, Dim, Kind, TensorType};
+use crate::tensor_type_detection::{detect_type_type, DetectedType};
+use crate::Module;
 use log::debug;
 use std::collections::HashMap;
 use syn::fold::{self, Fold};
 use syn::spanned::Spanned;
 use syn::UnOp::Neg;
 use syn::{
-    parse_quote, AngleBracketedGenericArguments, BinOp, Expr, ExprArray, ExprCall, ExprPath,
-    ExprTuple, FnArg, GenericArgument, Ident, Lit, Local, Pat, PatType, PathArguments, ReturnType,
-    Stmt, Type, TypeParamBound, TypePath,
+    parse_quote, BinOp, Expr, ExprArray, ExprCall, ExprMethodCall, ExprPath, ExprTuple, FnArg,
+    Ident, Lit, Local, Member, Pat, PatType, ReturnType, Stmt, Type,
 };
 
-pub struct Args {
+pub(crate) struct Args {
+    // TODO This could be a reference
+    module: Module,
+    current_self: Option<Ident>,
     vars: HashMap<Ident, DetectedType>,
-    fns: HashMap<Ident, Signature>,
     args: Vec<DetectedType>,
     return_type: DetectedType,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DetectedType {
-    NotDetected,
-    NotTensor,
-    Shape(Vec<Dim>),
-    Inferred(TensorType),
-    Declared(TensorType),
-}
-
-impl DetectedType {
-    pub fn is_arg_compatible(&self, other: &DetectedType) -> bool {
-        match (self, other) {
-            (
-                DetectedType::Inferred(left) | DetectedType::Declared(left),
-                DetectedType::Inferred(right) | DetectedType::Declared(right),
-            ) => left.is_arg_compatible(right),
-            n => todo!("Handle {n:?}"),
-        }
-    }
-}
-
 impl Args {
-    pub fn new(fns: HashMap<Ident, Signature>) -> Self {
+    pub fn new(module: Module) -> Self {
         Self {
             vars: HashMap::new(),
             return_type: DetectedType::NotDetected,
             args: vec![],
-            fns,
+            current_self: None,
+            module,
         }
+    }
+
+    pub(crate) fn set_self(&mut self, name: Ident) {
+        self.current_self = Some(name);
     }
 }
 
@@ -73,7 +60,7 @@ impl Args {
                 if let Pat::Ident(ref p) = pat {
                     // TODO Actually read the type of the tensor and affect it
                     let name = &p.ident;
-                    let pat_type = self.detect_type_type(&mut t.ty);
+                    let pat_type = detect_type_type(&mut t.ty);
                     if let DetectedType::Inferred(t) = pat_type {
                         self.assign_type(name, DetectedType::Inferred(t));
                     }
@@ -88,7 +75,7 @@ impl Args {
             Expr::Call(m) => {
                 if let Expr::Path(p) = &*m.func {
                     let ident = &p.path.segments[0].ident;
-                    if let Some(sig) = self.fns.get(ident) {
+                    if let Some(sig) = self.module.fns.get(ident) {
                         self.check_valid_call(&m, sig);
                     }
                 }
@@ -385,6 +372,10 @@ impl Args {
             Expr::Paren(p) => self.get_type(&*p.expr),
             Expr::Reference(reference) => self.get_type(&*reference.expr),
             Expr::Tuple(_tuple) => DetectedType::NotDetected,
+            // TODO
+            Expr::MethodCall(_tuple) => DetectedType::NotDetected,
+            // TODO
+            Expr::Call(_tuple) => DetectedType::NotTensor,
             m => todo!("Expr {m:?}"),
         }
     }
@@ -396,6 +387,72 @@ impl Args {
         }
     }
 
+    fn detect_type_method_call(&self, call: &ExprMethodCall) -> DetectedType {
+        let type_ = self.get_type(&call.receiver);
+        match &type_ {
+            DetectedType::Inferred(x) | DetectedType::Declared(x) => {
+                match &call.method.to_string()[..] {
+                    "linear" => {
+                        assert!(call.args.len() == 2);
+                        let weight_type = self.detect_type(&call.args[0]);
+                        let bias = self.detect_type(&call.args[1]);
+
+                        if x.kind != weight_type.kind {
+                            call.args[0]
+                                .span()
+                                .unwrap()
+                                .error("Mismatched types expected {x:?} but found {weight_type:?}")
+                                .emit();
+                        }
+                        if bias.kind != weight_type.kind {
+                            call.args[1]
+                                .span()
+                                .unwrap()
+                                .error(
+                                    "Mismatched types expected {weight_type:?} but found {bias:?}",
+                                )
+                                .emit();
+                        }
+                        if x.device != weight_type.device {
+                            call.args[0]
+                                .span()
+                                .unwrap()
+                                .error("Mismatched types expected {x:?} but found {weight_type:?}")
+                                .emit();
+                        }
+                        if bias.kind != weight_type.kind {
+                            call.args[1]
+                                .span()
+                                .unwrap()
+                                .error(
+                                    "Mismatched types expected {weight_type:?} but found {bias:?}",
+                                )
+                                .emit();
+                        }
+                        let outshape = vec![x.shape[0].clone(), weight_type.shape[0].clone()];
+                        DetectedType::Inferred(TensorType::new(
+                            outshape,
+                            x.kind.clone(),
+                            x.device.clone(),
+                        ))
+                    }
+                    n => todo!("Method call {n:?}"),
+                }
+            }
+            n => {
+                call.receiver
+                    .span()
+                    .unwrap()
+                    .error("Cannot get type")
+                    .emit();
+                todo!("method call {n:?} {call:?}")
+            }
+        }
+        // let args = &call.args;
+        // match &*call.func {
+        //     expr => todo!("type call {type_:?} {expr:?}"),
+        // }
+    }
     fn detect_type_call(&self, call: &ExprCall) -> DetectedType {
         let args = &call.args;
         match &*call.func {
@@ -482,6 +539,7 @@ impl Args {
 
     fn detect_type(&self, expr: &Expr) -> TensorType {
         match expr {
+            Expr::Reference(reference) => self.detect_type(&*reference.expr),
             Expr::Path(path) => {
                 assert!(path.path.segments.len() == 1);
                 let name = &path.path.segments[0].ident;
@@ -496,6 +554,28 @@ impl Args {
                         todo!("the name {name:?} was resolved as {n:?}");
                     }
                 }
+            }
+            Expr::Field(field) => {
+                if let Some(current_self) = &self.current_self {
+                    if let Some(struct_) = self.module.structs.get(current_self) {
+                        if let Member::Named(name) = &field.member {
+                            if let Some(type_) = struct_.members.get(name) {
+                                return type_.clone();
+                            }
+                        }
+                    }
+                }
+                field
+                    .span()
+                    .unwrap()
+                    .error("Couldn't get the tensor type for this variable")
+                    .emit();
+                todo!("Handle field members properly");
+            }
+            Expr::Call(call) => {
+                // TODO check that this call is Some
+                assert!(call.func == parse_quote!(Some));
+                self.detect_type(&call.args[0])
             }
             expr => todo!("Expr detect type {expr:?}"),
         }
@@ -562,118 +642,22 @@ impl Args {
         }
     }
 
-    fn detect_type_arg(&self, arg: FnArg) -> (Ident, Type, DetectedType) {
+    fn detect_type_arg(&self, arg: &mut FnArg) -> Option<(Ident, DetectedType)> {
         match arg {
             FnArg::Typed(PatType { pat, ty, .. }) => {
-                let name = match *pat {
-                    Pat::Ident(ident) => ident.ident,
+                let name = match &**pat {
+                    Pat::Ident(ident) => &ident.ident,
                     pat => todo!("Pat {pat:?}"),
                 };
                 let mut ty = ty.clone();
-                let detected_type = self.detect_type_type(&mut *ty);
-                (name, *ty, detected_type)
+                let detected_type = detect_type_type(&mut *ty);
+                let actual_type = *ty;
+                // Remove the typing
+                let result = Some((name.clone(), detected_type));
+                *arg = parse_quote!(#name: #actual_type);
+                result
             }
-            fn_arg => todo!("FnArg {fn_arg:?}"),
-        }
-    }
-
-    fn detect_type_type(&self, mut ty: &mut Type) -> DetectedType {
-        if let Type::Reference(ref_) = ty {
-            ty = &mut *ref_.elem;
-        }
-        match ty {
-            Type::Path(TypePath { ref mut path, .. }) => {
-                let mut segment = &mut path.segments[0];
-                if segment.ident.to_string() == "Tensor" {
-                    let detected_type = match &mut segment.arguments {
-                        PathArguments::AngleBracketed(angle) => self.detect_type_tuple(angle),
-                        PathArguments::None => DetectedType::NotDetected,
-                        n => todo!("Path arguments {n:?}"),
-                    };
-                    segment.arguments = PathArguments::None;
-                    detected_type
-                } else {
-                    DetectedType::NotTensor
-                }
-            }
-            ty => todo!("Type {ty:?} not handled yet."),
-        }
-    }
-
-    fn detect_type_tuple(&self, angle: &AngleBracketedGenericArguments) -> DetectedType {
-        assert!(angle.args.len() >= 1);
-
-        let shape = if let GenericArgument::Type(shape) = &angle.args[0] {
-            self.detect_type_shape(shape)
-        } else {
-            todo!("Could not detect shape")
-        };
-
-        let kind = if angle.args.len() > 1 {
-            if let GenericArgument::Type(kind) = &angle.args[1] {
-                self.detect_type_kind(kind)
-            } else {
-                todo!("Could not detect kind")
-            }
-        } else {
-            Kind::Implicit
-        };
-        let device = if angle.args.len() > 2 {
-            if let GenericArgument::Type(device) = &angle.args[2] {
-                self.detect_type_device(device)
-            } else {
-                todo!("Could not detect device")
-            }
-        } else {
-            Device::Implicit
-        };
-        DetectedType::Declared(TensorType::new(shape, kind, device))
-    }
-
-    fn detect_type_shape(&self, type_: &Type) -> Vec<Dim> {
-        match type_ {
-            Type::Tuple(tup) => tup
-                .elems
-                .iter()
-                .map(|item| self.detect_type_dim(item))
-                .collect(),
-            _ => todo!("This type_ is not handled in detect_type_shape"),
-        }
-    }
-
-    fn detect_type_dim(&self, type_: &Type) -> Dim {
-        match type_ {
-            Type::Path(path) => Dim::from_symbol(path.path.segments[0].ident.to_string()),
-            Type::TraitObject(object) => {
-                let dims: Vec<Dim> = object
-                    .bounds
-                    .iter()
-                    .map(|bound| self.detect_type_bound(bound))
-                    .collect();
-                Dim::from_add(dims)
-            }
-            s => todo!("Finish dim! {s:?}"),
-        }
-    }
-
-    fn detect_type_bound(&self, bound: &TypeParamBound) -> Dim {
-        match bound {
-            TypeParamBound::Trait(traits) => Dim::Symbol(traits.path.segments[0].ident.to_string()),
-            _ => todo!("Finish bound in dim"),
-        }
-    }
-
-    fn detect_type_kind(&self, type_: &Type) -> Kind {
-        match type_ {
-            Type::Path(path) => Kind::Symbol(path.path.segments[0].ident.to_string()),
-            _ => todo!("Finish type kind!"),
-        }
-    }
-
-    fn detect_type_device(&self, type_: &Type) -> Device {
-        match type_ {
-            Type::Path(path) => Device::Symbol(path.path.segments[0].ident.to_string()),
-            _ => todo!("Finish type device!"),
+            FnArg::Receiver(_) => None,
         }
     }
 
@@ -681,7 +665,7 @@ impl Args {
         match return_type {
             ReturnType::Type(_, ty) => {
                 let mut ty = ty.clone();
-                let detected_type = self.detect_type_type(&mut *ty);
+                let detected_type = detect_type_type(&mut *ty);
                 (Some(*ty), detected_type)
             }
             ReturnType::Default => (None, DetectedType::NotTensor),
@@ -711,14 +695,14 @@ fn compatible(left: &DetectedType, right: &DetectedType) -> bool {
 /// which we want non-default behavior. In this case the traversal needs to
 /// transform `Expr` and `Stmt` nodes.
 impl Fold for Args {
-    fn fold_fn_arg(&mut self, s: FnArg) -> FnArg {
-        let (name, actual_type, detected_type): (Ident, Type, DetectedType) =
-            self.detect_type_arg(s);
-        self.args.push(detected_type.clone());
-        if let DetectedType::Declared(tensor_type) = detected_type {
-            self.assign_type(&name, DetectedType::Declared(tensor_type));
+    fn fold_fn_arg(&mut self, mut s: FnArg) -> FnArg {
+        if let Some((name, detected_type)) = self.detect_type_arg(&mut s) {
+            self.args.push(detected_type.clone());
+            if let DetectedType::Declared(tensor_type) = detected_type {
+                self.assign_type(&name, DetectedType::Declared(tensor_type));
+            }
         }
-        parse_quote!(#name: #actual_type)
+        s
     }
 
     fn fold_return_type(&mut self, s: ReturnType) -> ReturnType {
@@ -760,8 +744,17 @@ impl Fold for Args {
                             );
                         }
                     }
-                    Expr::MethodCall(_call) => {
-                        todo!("Handle method calls");
+                    Expr::MethodCall(call) => {
+                        // todo!("Handle method calls");
+                        let detected_type = self.detect_type_method_call(call);
+                        if detected_type != self.return_type {
+                            e.span().unwrap().error(format!("The return type \"{detected_type:?}\" does not match the expected return type \"{:?}\"", self.return_type)).emit();
+                        } else {
+                            debug!(
+                                "There is a correct match between {detected_type:?} and {:?}",
+                                self.return_type
+                            );
+                        }
                     }
                     _ => (),
                 }

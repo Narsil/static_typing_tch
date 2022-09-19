@@ -67,19 +67,33 @@
 #![feature(proc_macro_diagnostic)]
 
 mod function;
+mod structure;
 mod tensor_type;
+mod tensor_type_detection;
 use crate::function::Signature;
-use function::Args;
+use crate::structure::Struct;
 use proc_macro::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
-use syn::fold::Fold;
 use syn::parse::{Parse, ParseStream};
 use syn::{Ident, Item, Result};
 
 struct Items {
     items: Vec<Item>,
+}
+
+#[derive(Clone)]
+pub(crate) struct Module {
     fns: HashMap<Ident, Signature>,
+    structs: HashMap<Ident, Struct>,
+}
+
+impl Module {
+    fn new() -> Self {
+        let fns = HashMap::new();
+        let structs: HashMap<Ident, Struct> = HashMap::new();
+        Self { fns, structs }
+    }
 }
 
 impl Parse for Items {
@@ -88,33 +102,37 @@ impl Parse for Items {
         while !input.is_empty() {
             items.push(input.parse()?);
         }
-        let fns = HashMap::new();
 
-        Ok(Self { items, fns })
+        Ok(Self { items })
+    }
+}
+
+impl Items {
+    fn tensor_check(&mut self) {
+        let mut module = Module::new();
+        self.items.iter_mut().for_each(|item| {
+            match item {
+                Item::Fn(function) => {
+                    module.inspect_fns(function);
+                }
+                Item::Struct(struct_) => {
+                    module.inspect_members(struct_);
+                }
+                // TODO
+                Item::Impl(impl_) => {
+                    module.inspect_methods(impl_);
+                }
+                it => todo!("Item {it:?}"),
+            }
+        });
     }
 }
 
 #[proc_macro]
 pub fn tensor_check(input: TokenStream) -> TokenStream {
-    let mut items: Items = syn::parse(input).unwrap();
-    let output: Vec<_> = items
-        .items
-        .iter_mut()
-        .map(|item| {
-            match item {
-                Item::Fn(function) => {
-                    // Parse the list of variables the user wanted to print.
-                    let mut args = Args::new(items.fns.clone());
-                    // use a syntax tree traversal to transform the function body.
-                    let output = args.fold_item_fn(function.clone());
-                    let name = function.sig.ident.clone();
-                    items.fns.insert(name, args.signature());
-                    output
-                }
-                it => todo!("Item {it:?}"),
-            }
-        })
-        .collect();
+    let mut items: Items = syn::parse(input).expect("Couldn't parse input");
+    items.tensor_check();
+    let items = items.items;
     // hand the resulting function body back to the compiler.
-    TokenStream::from(quote!(#(#output)*))
+    TokenStream::from(quote!(#(#items)*))
 }
