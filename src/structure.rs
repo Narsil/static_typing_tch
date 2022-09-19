@@ -3,12 +3,16 @@ use crate::tensor_type::TensorType;
 use crate::tensor_type_detection::{detect_type_type, DetectedType};
 use crate::Module;
 use std::collections::HashMap;
+use syn::spanned::Spanned;
 use syn::{fold::Fold, Ident, ImplItem, ItemFn, ItemImpl, ItemStruct, Type};
 
-fn resolve(type_: &Type) -> &Ident {
+fn resolve(type_: &Type) -> Option<&Ident> {
     match type_ {
-        Type::Path(path) => &path.path.segments[0].ident,
-        n => todo!("Resolve {n:?}"),
+        Type::Path(path) => Some(&path.path.segments[0].ident),
+        n => {
+            n.span().unwrap().warning("Could not resolve type").emit();
+            None
+        }
     }
 }
 
@@ -61,19 +65,20 @@ impl Module {
     pub fn inspect_methods(&mut self, impl_: &mut ItemImpl) {
         let module = self.clone();
 
-        let name = resolve(&impl_.self_ty);
-        if let Some(struct_) = self.structs.get_mut(&name) {
-            for item in &mut impl_.items {
-                if let ImplItem::Method(method) = item {
-                    let module: Module = module.clone();
-                    let mut args = Args::new(module);
-                    args.set_self(name.clone());
-                    // use a syntax tree traversal to transform the function body.
-                    let output = args.fold_impl_item_method(method.clone());
-                    let name = method.sig.ident.clone();
-                    let signature = args.signature();
-                    struct_.methods.insert(name, signature);
-                    *method = output
+        if let Some(name) = resolve(&impl_.self_ty) {
+            if let Some(struct_) = self.structs.get_mut(name) {
+                for item in &mut impl_.items {
+                    if let ImplItem::Method(method) = item {
+                        let module: Module = module.clone();
+                        let mut args = Args::new(module);
+                        args.set_self(name.clone());
+                        // use a syntax tree traversal to transform the function body.
+                        let output = args.fold_impl_item_method(method.clone());
+                        let name = method.sig.ident.clone();
+                        let signature = args.signature();
+                        struct_.methods.insert(name, signature);
+                        *method = output
+                    }
                 }
             }
         }

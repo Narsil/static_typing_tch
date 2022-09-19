@@ -58,7 +58,6 @@ impl Args {
             Pat::Type(ref mut t) => {
                 let pat = &*t.pat;
                 if let Pat::Ident(ref p) = pat {
-                    // TODO Actually read the type of the tensor and affect it
                     let name = &p.ident;
                     let pat_type = detect_type_type(&mut t.ty);
                     if let DetectedType::Inferred(t) = pat_type {
@@ -66,10 +65,22 @@ impl Args {
                     }
                     &p.ident
                 } else {
-                    todo!("let and print Type {t:?}");
+                    t.span().unwrap().error("let and print Type").emit();
+                    let init = self.fold_expr(expr);
+                    let stmt: Stmt = parse_quote! {
+                        let #pat = #init
+                    };
+                    return stmt;
                 }
             }
-            n => todo!("let and print {n:?}"),
+            n => {
+                n.span().unwrap().error("let and print").emit();
+                let init = self.fold_expr(expr);
+                let stmt: Stmt = parse_quote! {
+                    let #pat = #init
+                };
+                return stmt;
+            }
         };
         match &expr {
             Expr::Call(m) => {
@@ -95,7 +106,10 @@ impl Args {
             Expr::MethodCall(m) => {
                 let receiver_type = self.get_type(&*m.receiver);
                 match receiver_type {
-                    DetectedType::Shape(shape) => todo!("Shape {shape:?}"),
+                    DetectedType::Shape(_) => {
+                        m.receiver.span().unwrap().error("Shape").emit();
+                        //TODO
+                    }
                     DetectedType::NotTensor | DetectedType::NotDetected => (),
                     DetectedType::Inferred(type_) | DetectedType::Declared(type_) => {
                         let arg_types: Vec<_> =
@@ -197,23 +211,27 @@ impl Args {
                             }
                             "view" => {
                                 assert!(m.args.len() == 1);
-                                let outtype = self.detect_view_shape(&type_, &m.args[0]);
-                                self.assign_type(&ident, DetectedType::Inferred(outtype));
+                                if let Some(outtype) = self.detect_view_shape(&type_, &m.args[0]) {
+                                    self.assign_type(&ident, DetectedType::Inferred(outtype));
+                                }
                             }
                             "size" => {
                                 let shape = type_.shape;
                                 let outtype = DetectedType::Shape(shape);
                                 self.assign_type(&ident, outtype);
                             }
-                            m => todo!("Implement tensor method call {m:?}",),
+                            m => {
+                                m.span()
+                                    .unwrap()
+                                    .error(format!("Implement tensor method call {m:?}",))
+                                    .emit();
+                            }
                         }
                     }
                 }
             }
             s => {
                 s.span().unwrap().warning(format!("Unhandled")).emit();
-
-                // todo!("Other {s:?}")
             }
         }
         let init = self.fold_expr(expr);
@@ -232,7 +250,10 @@ impl Args {
                     .unwrap_or(&DetectedType::NotDetected)
                     .clone()
             }
-            n => todo!("get_signature_arg {n:?}"),
+            n => {
+                n.span().unwrap().error("get_signature_arg").emit();
+                DetectedType::NotDetected
+            }
         }
     }
 
@@ -255,7 +276,7 @@ impl Args {
             })
     }
 
-    fn detect_view_shape(&self, type_: &TensorType, view_arg: &Expr) -> TensorType {
+    fn detect_view_shape(&self, type_: &TensorType, view_arg: &Expr) -> Option<TensorType> {
         if let Expr::Tuple(tuple) = view_arg {
             // TODO fuse into 1 item with Option ?
             let mut filler = Dim::Mul(type_.shape.iter().map(|d| d.clone()).collect());
@@ -275,11 +296,20 @@ impl Args {
                                         filler_used= true;
                                         None
                     }else{
-                        todo!("Else ! ")
+
+                    elem.span().unwrap().error("Unhandled detect view shape").emit();
+                    None
+
                     },
-                    _ => panic!("Can't handle non int cat"),
+                    n => {
+                        n.span().unwrap().error("Can't handle non int cat").emit();
+                        None
+                    },
                                         },
-                                        n => todo!("Detect view shape {n:?}")
+                                (_, n) => {
+                        n.span().unwrap().error("Detect view shape").emit();
+                        None
+                    },
                                     }
                                 }
                         Expr::Index(index) => {
@@ -330,9 +360,14 @@ impl Args {
                     ))
                     .emit();
             }
-            newtype
+            Some(newtype)
         } else {
-            todo!("detect view shape {view_arg:?}")
+            view_arg
+                .span()
+                .unwrap()
+                .error(format!("detect view shape {view_arg:?}"))
+                .emit();
+            None
         }
     }
 
@@ -500,8 +535,12 @@ impl Args {
                         ))
                     }
                     "view" => {
-                        let outtype = self.detect_view_shape(&x, &call.args[0]);
-                        DetectedType::Inferred(outtype)
+                        if let Some(outtype) = self.detect_view_shape(&x, &call.args[0]) {
+                            DetectedType::Inferred(outtype)
+                        } else {
+                            // Warning already raised by fn
+                            DetectedType::NotDetected
+                        }
                     }
                     n => todo!("Method call {n:?}"),
                 }
@@ -561,9 +600,9 @@ impl Args {
         let dim: i64 = match dim {
             Expr::Lit(lit) => match &lit.lit {
                 Lit::Int(int) => int.base10_parse().unwrap(),
-                _ => panic!("Can't handle non int cat"),
+                _ => todo!("Can't handle non int cat"),
             },
-            _ => panic!("Can't handle dynamic cat yet."),
+            _ => todo!("Can't handle dynamic cat yet."),
         };
         let types: Vec<TensorType> = match tensors {
             Expr::Reference(reference) => match &*reference.expr {
@@ -572,9 +611,9 @@ impl Args {
                     .iter()
                     .map(|item| self.detect_type(item))
                     .collect(),
-                _ => panic!("cat is not supposed to be call that way"),
+                _ => todo!("cat is not supposed to be call that way"),
             },
-            _ => panic!("cat is not supposed to be call that way"),
+            _ => todo!("cat is not supposed to be call that way"),
         };
 
         let type_ = types
@@ -640,7 +679,6 @@ impl Args {
                 todo!("Handle field members properly");
             }
             Expr::Call(call) => {
-                // TODO check that this call is Some
                 assert!(call.func == parse_quote!(Some));
                 self.detect_type(&call.args[0])
             }
@@ -671,9 +709,15 @@ impl Args {
                 Expr::Array(ExprArray { elems, .. }) => {
                     elems.iter().map(|elem| self.detect_dim(elem)).collect()
                 }
-                expr => todo!("Detect shape2 {expr:?}"),
+                expr => {
+                    expr.span().unwrap().error("Detect shape2").emit();
+                    vec![]
+                }
             },
-            expr => todo!("Detect shape {expr:?}"),
+            expr => {
+                expr.span().unwrap().error("Detect shape").emit();
+                vec![]
+            }
         }
     }
 
@@ -683,29 +727,56 @@ impl Args {
                 assert!(elems.len() == 2);
                 let kind = match &elems[0] {
                     Expr::Path(ExprPath { path, .. }) => {
-                        let name = &path.segments[1].ident.to_string();
-                        if name == "Float" {
+                        let name = &path.segments[1].ident;
+                        if name.to_string() == "Float" {
                             Kind::Float
                         } else {
-                            todo!("Detect kind device kind literal {name:?}")
+                            name.span()
+                                .unwrap()
+                                .error(format!(
+                                    "Detect kind device device literal {:?}",
+                                    name.to_string()
+                                ))
+                                .emit();
+                            Kind::Implicit
                         }
                     }
-                    expr => todo!("detect kind device kind {expr:?}"),
+                    expr => {
+                        expr.span().unwrap().error("Detect kind device kind").emit();
+                        Kind::Implicit
+                    }
                 };
                 let device = match &elems[1] {
                     Expr::Path(ExprPath { path, .. }) => {
-                        let device = &path.segments[1].ident.to_string();
-                        if device == "Cpu" {
+                        let device = &path.segments[1].ident;
+                        if device.to_string() == "Cpu" {
                             Device::Cpu
                         } else {
-                            todo!("Detect kind device device literal {device:?}")
+                            device
+                                .span()
+                                .unwrap()
+                                .error(format!(
+                                    "Detect kind device device literal {:?}",
+                                    device.to_string()
+                                ))
+                                .emit();
+                            Device::Implicit
                         }
                     }
-                    expr => todo!("detect kind device device {expr:?}"),
+                    expr => {
+                        expr.span()
+                            .unwrap()
+                            .error("Detect kind device device literal")
+                            .emit();
+                        Device::Implicit
+                    }
                 };
                 (kind, device)
             }
-            expr => todo!("Detect kind device {expr:?}"),
+            expr => {
+                expr.span().unwrap().error("Detect kind device ").emit();
+                (Kind::Implicit, Device::Implicit)
+            }
         }
     }
 
@@ -714,7 +785,10 @@ impl Args {
             FnArg::Typed(PatType { pat, ty, .. }) => {
                 let name = match &**pat {
                     Pat::Ident(ident) => &ident.ident,
-                    pat => todo!("Pat {pat:?}"),
+                    pat => {
+                        pat.span().unwrap().error("Unhandled pat").emit();
+                        return None;
+                    }
                 };
                 let mut ty = ty.clone();
                 let detected_type = detect_type_type(&mut *ty);
@@ -746,7 +820,6 @@ impl Args {
 }
 fn compatible(left: &DetectedType, right: &DetectedType) -> bool {
     left == right
-    // TODO
 }
 
 /// The `Fold` trait is a way to traverse an owned syntax tree and replace some
@@ -775,7 +848,7 @@ impl Fold for Args {
     fn fold_return_type(&mut self, s: ReturnType) -> ReturnType {
         let (actual_type, detected_type) = self.detect_type_return(s);
         if let DetectedType::Declared(type_) = detected_type {
-            // TODO modify this so that Eq actually validates
+            // modify this so that Eq actually validates
             // Inferred == Declared
             self.return_type = DetectedType::Inferred(type_);
         } else {
@@ -798,7 +871,6 @@ impl Fold for Args {
                 }
             }
             Stmt::Expr(ref e) => {
-                // TODO also handle actual `return r;`.
                 match e {
                     Expr::Call(call) => {
                         let detected_type = self.detect_type_call(call);
@@ -812,7 +884,6 @@ impl Fold for Args {
                         }
                     }
                     Expr::MethodCall(call) => {
-                        // todo!("Handle method calls");
                         let detected_type = self.detect_type_method_call(call);
                         if detected_type != self.return_type {
                             e.span().unwrap().error(format!("The return type \"{detected_type:?}\" does not match the expected return type \"{:?}\"", self.return_type)).emit();

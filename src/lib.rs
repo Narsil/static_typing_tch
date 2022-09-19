@@ -76,6 +76,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
 use syn::parse::{Parse, ParseStream};
+use syn::spanned::Spanned;
 use syn::{Ident, Item, Result};
 
 struct Items {
@@ -110,19 +111,18 @@ impl Parse for Items {
 impl Items {
     fn tensor_check(&mut self) {
         let mut module = Module::new();
-        self.items.iter_mut().for_each(|item| {
-            match item {
-                Item::Fn(function) => {
-                    module.inspect_fns(function);
-                }
-                Item::Struct(struct_) => {
-                    module.inspect_members(struct_);
-                }
-                // TODO
-                Item::Impl(impl_) => {
-                    module.inspect_methods(impl_);
-                }
-                it => todo!("Item {it:?}"),
+        self.items.iter_mut().for_each(|item| match item {
+            Item::Fn(function) => {
+                module.inspect_fns(function);
+            }
+            Item::Struct(struct_) => {
+                module.inspect_members(struct_);
+            }
+            Item::Impl(impl_) => {
+                module.inspect_methods(impl_);
+            }
+            it => {
+                it.span().unwrap().warning("This is unhandled").emit();
             }
         });
     }

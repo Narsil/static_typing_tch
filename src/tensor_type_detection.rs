@@ -1,4 +1,5 @@
 use crate::tensor_type::{Device, Dim, Kind, TensorType};
+use syn::spanned::Spanned;
 use syn::{
     AngleBracketedGenericArguments, GenericArgument, PathArguments, Type, TypeParamBound, TypePath,
 };
@@ -18,7 +19,8 @@ impl DetectedType {
                 DetectedType::Inferred(left) | DetectedType::Declared(left),
                 DetectedType::Inferred(right) | DetectedType::Declared(right),
             ) => left.is_arg_compatible(right),
-            n => todo!("Handle {n:?}"),
+            // TODO maybe more cases to handle
+            (n, m) => n == m,
         }
     }
 }
@@ -42,7 +44,15 @@ pub fn detect_type_type(mut ty: &mut Type) -> DetectedType {
                             .emit();
                         DetectedType::NotDetected
                     }
-                    n => todo!("Path arguments {n:?}"),
+                    _ => {
+                        segment
+                            .ident
+                            .span()
+                            .unwrap()
+                            .error("Path arguments unhandled")
+                            .emit();
+                        DetectedType::NotDetected
+                    }
                 };
                 segment.arguments = PathArguments::None;
                 detected_type
@@ -50,7 +60,10 @@ pub fn detect_type_type(mut ty: &mut Type) -> DetectedType {
                 DetectedType::NotTensor
             }
         }
-        ty => todo!("Type {ty:?} not handled yet."),
+        ty => {
+            ty.span().unwrap().error("Type not handled yet.").emit();
+            DetectedType::NotDetected
+        }
     }
 }
 
@@ -60,14 +73,24 @@ fn detect_type_tuple(angle: &AngleBracketedGenericArguments) -> DetectedType {
     let shape = if let GenericArgument::Type(shape) = &angle.args[0] {
         detect_type_shape(shape)
     } else {
-        todo!("Could not detect shape")
+        angle.args[0]
+            .span()
+            .unwrap()
+            .error("Could not detect shape")
+            .emit();
+        vec![]
     };
 
     let kind = if angle.args.len() > 1 {
         if let GenericArgument::Type(kind) = &angle.args[1] {
             detect_type_kind(kind)
         } else {
-            todo!("Could not detect kind")
+            angle.args[1]
+                .span()
+                .unwrap()
+                .error("Could not detect kind")
+                .emit();
+            Kind::Implicit
         }
     } else {
         Kind::Implicit
@@ -76,7 +99,12 @@ fn detect_type_tuple(angle: &AngleBracketedGenericArguments) -> DetectedType {
         if let GenericArgument::Type(device) = &angle.args[2] {
             detect_type_device(device)
         } else {
-            todo!("Could not detect device")
+            angle.args[2]
+                .span()
+                .unwrap()
+                .error("Could not detect device")
+                .emit();
+            Device::Implicit
         }
     } else {
         Device::Implicit
@@ -86,43 +114,71 @@ fn detect_type_tuple(angle: &AngleBracketedGenericArguments) -> DetectedType {
 
 fn detect_type_shape(type_: &Type) -> Vec<Dim> {
     match type_ {
-        Type::Tuple(tup) => tup.elems.iter().map(|item| detect_type_dim(item)).collect(),
-        _ => todo!("This type_ is not handled in detect_type_shape"),
+        Type::Tuple(tup) => tup
+            .elems
+            .iter()
+            .flat_map(|item| detect_type_dim(item))
+            .collect(),
+        _ => {
+            type_
+                .span()
+                .unwrap()
+                .error("This type_ is not handled in detect_type_shape")
+                .emit();
+            vec![]
+        }
     }
 }
 
-fn detect_type_dim(type_: &Type) -> Dim {
+fn detect_type_dim(type_: &Type) -> Option<Dim> {
     match type_ {
-        Type::Path(path) => Dim::from_symbol(path.path.segments[0].ident.to_string()),
+        Type::Path(path) => Some(Dim::from_symbol(path.path.segments[0].ident.to_string())),
         Type::TraitObject(object) => {
             let dims: Vec<Dim> = object
                 .bounds
                 .iter()
-                .map(|bound| detect_type_bound(bound))
+                .flat_map(|bound| detect_type_bound(bound))
                 .collect();
-            Dim::from_add(dims)
+            Some(Dim::from_add(dims))
         }
-        s => todo!("Finish dim! {s:?}"),
+        s => {
+            s.span()
+                .unwrap()
+                .error("Detecting dim is unfinihsed")
+                .emit();
+            None
+        }
     }
 }
 
-fn detect_type_bound(bound: &TypeParamBound) -> Dim {
+fn detect_type_bound(bound: &TypeParamBound) -> Option<Dim> {
     match bound {
-        TypeParamBound::Trait(traits) => Dim::Symbol(traits.path.segments[0].ident.to_string()),
-        _ => todo!("Finish bound in dim"),
+        TypeParamBound::Trait(traits) => {
+            Some(Dim::Symbol(traits.path.segments[0].ident.to_string()))
+        }
+        n => {
+            n.span().unwrap().error("Finish bound in dim").emit();
+            None
+        }
     }
 }
 
 fn detect_type_kind(type_: &Type) -> Kind {
     match type_ {
         Type::Path(path) => Kind::Symbol(path.path.segments[0].ident.to_string()),
-        _ => todo!("Finish type kind!"),
+        n => {
+            n.span().unwrap().error("Finish type kind!").emit();
+            Kind::Implicit
+        }
     }
 }
 
 fn detect_type_device(type_: &Type) -> Device {
     match type_ {
         Type::Path(path) => Device::Symbol(path.path.segments[0].ident.to_string()),
-        _ => todo!("Finish type device!"),
+        n => {
+            n.span().unwrap().error("Finish type device!").emit();
+            Device::Implicit
+        }
     }
 }
