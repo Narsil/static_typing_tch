@@ -326,14 +326,23 @@ impl Args {
                                     filler.divide_by(dim.clone());
                                     Some(dim)
                                         },
-                                        n => todo!("detect view shape lit {n:?}" )
+                                        n => {
+                                            n.span().unwrap().error("detect view shape lit").emit();
+                                            None
+                                        }
                                         }
 
                                 }
-                                n => todo!("detect view shape AA {n:?}")
+                                (_, n) => {
+                                            n.span().unwrap().error("detect view shape AA").emit();
+                                            None
+                                }
                             }
                         }
-                                n => todo!("Detect view shape expr {n:?}")
+                                n => {
+                                            n.span().unwrap().error("detect view expr AA").emit();
+                                            None
+                                }
                     }
                 })
             .collect();
@@ -380,7 +389,8 @@ impl Args {
                         .unwrap_or(&DetectedType::NotDetected)
                         .clone()
                 } else {
-                    todo!("Too many path segments")
+                    path.span().unwrap().error("Too many path segments").emit();
+                    DetectedType::NotDetected
                 }
             }
             Expr::Binary(binary) => {
@@ -426,9 +436,8 @@ impl Args {
             }
             Expr::MethodCall(expr) => self.detect_type_method_call(expr),
             m => {
-                m.span().unwrap().warning("Expr").emit();
-                // DetectedType::NotDetected
-                todo!("Expr {m:?}")
+                m.span().unwrap().warning("Unhandled Expr").emit();
+                DetectedType::NotDetected
             }
         }
     }
@@ -542,22 +551,21 @@ impl Args {
                             DetectedType::NotDetected
                         }
                     }
-                    n => todo!("Method call {n:?}"),
+                    n => {
+                        n.span().unwrap().error("Method call").emit();
+                        DetectedType::NotDetected
+                    }
                 }
             }
-            n => {
+            _ => {
                 call.receiver
                     .span()
                     .unwrap()
-                    .error("Cannot get type")
+                    .error("Cannot get type method call")
                     .emit();
-                todo!("method call {n:?} {call:?}")
+                DetectedType::NotDetected
             }
         }
-        // let args = &call.args;
-        // match &*call.func {
-        //     expr => todo!("type call {type_:?} {expr:?}"),
-        // }
     }
     fn detect_type_call(&self, call: &ExprCall) -> DetectedType {
         let args = &call.args;
@@ -592,7 +600,10 @@ impl Args {
                     DetectedType::NotTensor
                 }
             }
-            expr => todo!("type call {expr:?}"),
+            expr => {
+                expr.span().unwrap().error("type call").emit();
+                DetectedType::NotDetected
+            }
         }
     }
 
@@ -600,9 +611,15 @@ impl Args {
         let dim: i64 = match dim {
             Expr::Lit(lit) => match &lit.lit {
                 Lit::Int(int) => int.base10_parse().unwrap(),
-                _ => todo!("Can't handle non int cat"),
+                n => {
+                    n.span().unwrap().error("Can't handle non int cat").emit();
+                    0
+                }
             },
-            _ => todo!("Can't handle dynamic cat yet."),
+            n => {
+                n.span().unwrap().error("Can't handle non int cat").emit();
+                0
+            }
         };
         let types: Vec<TensorType> = match tensors {
             Expr::Reference(reference) => match &*reference.expr {
@@ -611,9 +628,21 @@ impl Args {
                     .iter()
                     .map(|item| self.detect_type(item))
                     .collect(),
-                _ => todo!("cat is not supposed to be call that way"),
+                n => {
+                    n.span()
+                        .unwrap()
+                        .error("cat is not supposed to be call that way")
+                        .emit();
+                    vec![]
+                }
             },
-            _ => todo!("cat is not supposed to be call that way"),
+            n => {
+                n.span()
+                    .unwrap()
+                    .error("cat is not supposed to be call that way")
+                    .emit();
+                vec![]
+            }
         };
 
         let type_ = types
@@ -644,6 +673,7 @@ impl Args {
     }
 
     fn detect_type(&self, expr: &Expr) -> TensorType {
+        let empty = TensorType::new(vec![], Kind::Implicit, Device::Implicit);
         match expr {
             Expr::Reference(reference) => self.detect_type(&*reference.expr),
             Expr::Path(path) => {
@@ -652,12 +682,12 @@ impl Args {
                 match self.vars.get(name) {
                     Some(DetectedType::Declared(tensor_type)) => tensor_type.clone(),
                     Some(DetectedType::Inferred(tensor_type)) => tensor_type.clone(),
-                    n => {
+                    _ => {
                         name.span()
                             .unwrap()
                             .error("Couldn't get the tensor type for this variable")
                             .emit();
-                        todo!("the name {name:?} was resolved as {n:?}");
+                        empty
                     }
                 }
             }
@@ -676,20 +706,29 @@ impl Args {
                     .unwrap()
                     .error("Couldn't get the tensor type for this variable")
                     .emit();
-                todo!("Handle field members properly");
+                empty
             }
             Expr::Call(call) => {
                 assert!(call.func == parse_quote!(Some));
                 self.detect_type(&call.args[0])
             }
-            expr => todo!("Expr detect type {expr:?}"),
+            expr => {
+                expr.span()
+                    .unwrap()
+                    .error("Expr couldn't detect type")
+                    .emit();
+                empty
+            }
         }
     }
     fn detect_dim(&self, expr: &Expr) -> Dim {
         match expr {
             Expr::Lit(expr_lit) => match &expr_lit.lit {
                 Lit::Int(lit_int) => Dim::from_num(lit_int.base10_parse().unwrap()),
-                lit => todo!("Detect shape lit {lit:?}"),
+                lit => {
+                    lit.span().unwrap().error("Detect shape lit {lit:?}").emit();
+                    Dim::from_num(0)
+                }
             },
             Expr::Binary(expr_bin) => match expr_bin.op {
                 BinOp::Mul(_) => {
@@ -697,9 +736,15 @@ impl Args {
                     let right = self.detect_dim(&*expr_bin.right);
                     left * right
                 }
-                n => todo!("detect shape operator {n:?}"),
+                n => {
+                    n.span().unwrap().error("detect shape operator").emit();
+                    Dim::from_num(0)
+                }
             },
-            n => todo!("detect shape Handle {n:?}"),
+            n => {
+                n.span().unwrap().error("detect shape Handle").emit();
+                Dim::from_num(0)
+            }
         }
     }
 
