@@ -55,6 +55,18 @@ fn concat_tensors() {
 }
 
 #[test]
+fn tensor_call() {
+    let hidden_states = Tensor::ones(&[3 * 5, 24], (Kind::Float, Device::Cpu));
+    let dense_h_to_4h = Tensor::ones(&[24, 4 * 24], (Kind::Float, Device::Cpu));
+    let dense_h_to_4h_bias = Tensor::ones(&[4 * 24], (Kind::Float, Device::Cpu));
+
+    let t = Tensor::addmm(&dense_h_to_4h_bias, &hidden_states, &dense_h_to_4h);
+
+    assert_eq!(t.size(), &[15, 96]);
+
+}
+
+#[test]
 fn attention() {
     let hidden_states = Tensor::ones(&[3 * 5, 24], (Kind::Float, Device::Cpu));
     let dense_h_to_4h = Tensor::ones(&[24, 4 * 24], (Kind::Float, Device::Cpu));

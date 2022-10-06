@@ -18,3 +18,6 @@ log = "0.4"
 [dev-dependencies]
 trybuild = "1"
 tch = { git="https://github.com/LaurentMazare/tch-rs.git" }
+
+[profile.test]
+opt-level = 3

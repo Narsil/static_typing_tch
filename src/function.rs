@@ -328,243 +328,237 @@ impl Args {
 
     fn detect_type_method_call(&self, call: &ExprMethodCall) -> DetectedType {
         let type_ = self.get_type(&call.receiver);
-        let arg_types: Vec<_> = call.args.iter().map(|item| self.get_type(item)).collect();
         match &type_ {
-            DetectedType::Inferred(x) | DetectedType::Declared(x) => {
-                match &call.method.to_string()[..] {
-                    "linear" => {
-                        assert!(call.args.len() == 2);
-                        let weight_type = self.detect_type(&call.args[0]);
-                        let bias = self.detect_type(&call.args[1]);
-
-                        if x.kind != weight_type.kind {
-                            call.args[0]
-                                .span()
-                                .unwrap()
-                                .error("Mismatched types expected {x:?} but found {weight_type:?}")
-                                .emit();
-                        }
-                        if bias.kind != weight_type.kind {
-                            call.args[1]
-                                .span()
-                                .unwrap()
-                                .error(
-                                    "Mismatched types expected {weight_type:?} but found {bias:?}",
-                                )
-                                .emit();
-                        }
-                        if x.device != weight_type.device {
-                            call.args[0]
-                                .span()
-                                .unwrap()
-                                .error("Mismatched types expected {x:?} but found {weight_type:?}")
-                                .emit();
-                        }
-                        if bias.kind != weight_type.kind {
-                            call.args[1]
-                                .span()
-                                .unwrap()
-                                .error(
-                                    "Mismatched types expected {weight_type:?} but found {bias:?}",
-                                )
-                                .emit();
-                        }
-                        let outshape = vec![x.shape[0].clone(), weight_type.shape[0].clone()];
-                        DetectedType::Inferred(TensorType::new(
-                            outshape,
-                            x.kind.clone(),
-                            x.device.clone(),
-                        ))
-                    }
-                    "addmm" => {
-                        assert!(call.args.len() == 2);
-                        let bias = x;
-                        let x = self.detect_type(&call.args[0]);
-                        let weight_type = self.detect_type(&call.args[1]);
-
-                        if x.kind != weight_type.kind {
-                            call.args[0]
-                                .span()
-                                .unwrap()
-                                .error("Mismatched types expected {x:?} but found {weight_type:?}")
-                                .emit();
-                        }
-                        if bias.kind != weight_type.kind {
-                            call.args[1]
-                                .span()
-                                .unwrap()
-                                .error(
-                                    "Mismatched types expected {weight_type:?} but found {bias:?}",
-                                )
-                                .emit();
-                        }
-                        if x.device != weight_type.device {
-                            call.args[0]
-                                .span()
-                                .unwrap()
-                                .error("Mismatched types expected {x:?} but found {weight_type:?}")
-                                .emit();
-                        }
-                        if bias.kind != weight_type.kind {
-                            call.args[1]
-                                .span()
-                                .unwrap()
-                                .error(
-                                    "Mismatched types expected {weight_type:?} but found {bias:?}",
-                                )
-                                .emit();
-                        }
-                        // Assert shapes
-                        if bias.shape.len() != 1 {
-                            call.receiver
-                                .span()
-                                .unwrap()
-                                .error(format!("This tensor must be 1 dimensional but found {x:?}"))
-                                .emit();
-                        }
-                        let type_ = &x;
-                        let m = call;
-                        assert!(arg_types.len() == 2);
-                        let arg_types: Vec<_> = arg_types
-                            .into_iter()
-                            .enumerate()
-                            .map(|(i, arg_type)| match arg_type {
-                                DetectedType::Inferred(type_) | DetectedType::Declared(type_) => {
-                                    if type_.shape.len() != 2 {
-                                        m.args[i]
-                                            .span()
-                                            .unwrap()
-                                            .error(format!(
-                                            "This tensor must be 2 dimensional but found {type_:?}"
-                                        ))
-                                            .emit();
-                                    }
-                                    type_
-                                }
-                                _ => unreachable!(),
-                            })
-                            .collect();
-                        // (U1, N) (B, M) (M, N)
-                        // TODO check bias dim is 1
-                        // for later because 1 vs U1 (should ideally be
-                        // solved directly in the parser
-                        let n_bias = &bias.shape[0];
-
-                        let _b_arg = &arg_types[0].shape[0];
-                        let m_arg = &arg_types[0].shape[1];
-
-                        let m_weight = &arg_types[1].shape[0];
-                        let n_weight = &arg_types[1].shape[1];
-
-                        if m_arg != m_weight {
-                            m.args[0].span()
-                                .unwrap().error(format!(
-                                            "Second dim was expected to be {m_weight:?} but found {m_arg:?}")).emit();
-                        }
-                        if n_weight != n_bias {
-                            m.args[1]
-                                        .span()
-                                                    .unwrap()
-                                                    .error(format!(
-                                            "Second dim was expected to be {n_bias:?} but found {n_weight:?}")).emit();
-                        }
-
-                        // Assert kinds are identical
-                        arg_types.iter().enumerate().for_each(|(i, arg_type)| {
-                            if type_.kind != arg_type.kind {
-                                m.args[i]
-                                    .span()
-                                    .unwrap()
-                                    .error(format!(
-                                        "Expected kind {:?} but found {:?}",
-                                        type_.kind, arg_types[0].kind
-                                    ))
-                                    .emit();
-                            }
-                        });
-
-                        // Assert devices are identical
-                        arg_types.iter().enumerate().for_each(|(i, arg_type)| {
-                            if type_.device != arg_type.device {
-                                call.args[i]
-                                    .span()
-                                    .unwrap()
-                                    .error(format!(
-                                        "Expected device {:?} but found {:?}",
-                                        type_.device, arg_types[0].device
-                                    ))
-                                    .emit();
-                            }
-                        });
-
-                        // let outtype = TensorType::new(
-                        //     vec![b_arg.clone(), n_weight.clone()],
-                        //     type_.kind,
-                        //     type_.device,
-                        // );
-                        let outshape = vec![x.shape[0].clone(), weight_type.shape[1].clone()];
-                        DetectedType::Inferred(TensorType::new(
-                            outshape,
-                            x.kind.clone(),
-                            x.device.clone(),
-                        ))
-                    }
-                    "view" => self.detect_view_shape(&x, &call.args[0]),
-                    "size" => {
-                        let shape = x.shape.clone();
-                        DetectedType::Shape(shape)
-                    }
-                    n => {
-                        n.span().unwrap().error("Method call").emit();
-                        DetectedType::NotDetected
-                    }
-                }
+            DetectedType::Inferred(_) | DetectedType::Declared(_) => {
+                let mut args = vec![&*call.receiver];
+                args.extend(call.args.iter().collect::<Vec<_>>());
+                self.detect_type_call2(&call.method, &args)
             }
-            _ => {
+            n => {
                 call.receiver
                     .span()
                     .unwrap()
-                    .warning("Cannot get type method call")
+                    .warning(format!("Cannot get type method call {n:?}"))
                     .emit();
                 DetectedType::NotDetected
             }
         }
     }
     fn detect_type_call(&self, call: &ExprCall) -> DetectedType {
-        let args = &call.args;
         match &*call.func {
             Expr::Path(expr) => {
                 if &expr.path.segments[0].ident.to_string() == "Tensor" {
-                    match &expr.path.segments[1].ident.to_string()[..] {
-                        "ones" | "zeros" => {
-                            let shape: Vec<Dim> = self.detect_shape(&args[0]);
-                            // args[0]
-                            //     .span()
-                            //     .unwrap()
-                            //     .warning(format!("Shape {shape:?}"))
-                            //     .emit();
-                            let (kind, device) = self.detect_kind_device(&args[1]);
-                            DetectedType::Inferred(TensorType::new(shape, kind, device))
-                        }
-                        "cat" => {
-                            assert!(args.len() == 2);
-                            DetectedType::Inferred(self.detect_cat_type(&args[0], &args[1]))
-                        }
-                        s => {
-                            call.func
-                                .span()
-                                .unwrap()
-                                .error(format!("{s} not handled"))
-                                .emit();
-                            DetectedType::NotDetected
-                        }
-                    }
+                    let name = &expr.path.segments[1].ident;
+                    let args = call.args.iter().collect::<Vec<_>>();
+                    self.detect_type_call2(name, &args)
                 } else {
                     DetectedType::NotTensor
                 }
             }
             expr => {
                 expr.span().unwrap().error("type call").emit();
+                DetectedType::NotDetected
+            }
+        }
+    }
+
+    fn detect_type_call2(&self, name: &Ident, args: &[&Expr]) -> DetectedType {
+        match &name.to_string()[..] {
+            "ones" | "zeros" => {
+                let shape: Vec<Dim> = self.detect_shape(&args[0]);
+                // args[0]
+                //     .span()
+                //     .unwrap()
+                //     .warning(format!("Shape {shape:?}"))
+                //     .emit();
+                let (kind, device) = self.detect_kind_device(&args[1]);
+                DetectedType::Inferred(TensorType::new(shape, kind, device))
+            }
+            "cat" => {
+                assert!(args.len() == 2);
+                DetectedType::Inferred(self.detect_cat_type(&args[0], &args[1]))
+            }
+            "linear" => {
+                assert!(args.len() == 3);
+
+                let x = self.detect_type(&args[0]);
+                let weight_type = self.detect_type(&args[1]);
+                let bias = self.detect_type(&args[2]);
+
+                if x.kind != weight_type.kind {
+                    args[0]
+                        .span()
+                        .unwrap()
+                        .error("Mismatched types expected {x:?} but found {weight_type:?}")
+                        .emit();
+                }
+                if bias.kind != weight_type.kind {
+                    args[1]
+                        .span()
+                        .unwrap()
+                        .error("Mismatched types expected {weight_type:?} but found {bias:?}")
+                        .emit();
+                }
+                if x.device != weight_type.device {
+                    args[0]
+                        .span()
+                        .unwrap()
+                        .error("Mismatched types expected {x:?} but found {weight_type:?}")
+                        .emit();
+                }
+                if bias.kind != weight_type.kind {
+                    args[1]
+                        .span()
+                        .unwrap()
+                        .error("Mismatched types expected {weight_type:?} but found {bias:?}")
+                        .emit();
+                }
+                let outshape = vec![x.shape[0].clone(), weight_type.shape[0].clone()];
+                DetectedType::Inferred(TensorType::new(outshape, x.kind.clone(), x.device.clone()))
+            }
+            "addmm" => {
+                assert!(args.len() == 3);
+                let bias = self.detect_type(&args[0]);
+                let x = self.detect_type(&args[1]);
+                let weight_type = self.detect_type(&args[2]);
+
+                if x.kind != weight_type.kind {
+                    args[1]
+                        .span()
+                        .unwrap()
+                        .error("Mismatched types expected {x:?} but found {weight_type:?}")
+                        .emit();
+                }
+                if bias.kind != weight_type.kind {
+                    args[2]
+                        .span()
+                        .unwrap()
+                        .error("Mismatched types expected {weight_type:?} but found {bias:?}")
+                        .emit();
+                }
+                if x.device != weight_type.device {
+                    args[1]
+                        .span()
+                        .unwrap()
+                        .error("Mismatched types expected {x:?} but found {weight_type:?}")
+                        .emit();
+                }
+                if bias.kind != weight_type.kind {
+                    args[2]
+                        .span()
+                        .unwrap()
+                        .error("Mismatched types expected {weight_type:?} but found {bias:?}")
+                        .emit();
+                }
+                // Assert shapes
+                if bias.shape.len() != 1 {
+                    args[0]
+                        .span()
+                        .unwrap()
+                        .error(format!("This tensor must be 1 dimensional but found {x:?}"))
+                        .emit();
+                }
+                let type_ = &x;
+                let arg_types: Vec<_> = args
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, arg)| {
+                        let arg_type = self.get_type(arg);
+                        match arg_type {
+                            DetectedType::Inferred(type_) | DetectedType::Declared(type_) => {
+                                if i != 0 && type_.shape.len() != 2 {
+                                    args[i]
+                                        .span()
+                                        .unwrap()
+                                        .error(format!(
+                                            "This tensor must be 2 dimensional but found {type_:?}"
+                                        ))
+                                        .emit();
+                                }
+                                type_
+                            }
+                            _ => unreachable!(),
+                        }
+                    })
+                    .collect();
+                // (U1, N) (B, M) (M, N)
+                // TODO check bias dim is 1
+                // for later because 1 vs U1 (should ideally be
+                // solved directly in the parser
+                let n_bias = &bias.shape[0];
+
+                let _b_arg = &arg_types[1].shape[0];
+                let m_arg = &arg_types[1].shape[1];
+
+                let m_weight = &arg_types[2].shape[0];
+                let n_weight = &arg_types[2].shape[1];
+
+                if m_arg != m_weight {
+                    args[1]
+                        .span()
+                        .unwrap()
+                        .error(format!(
+                            "Second dim was expected to be {m_weight:?} but found {m_arg:?}"
+                        ))
+                        .emit();
+                }
+                if n_weight != n_bias {
+                    args[2]
+                        .span()
+                        .unwrap()
+                        .error(format!(
+                            "Second dim was expected to be {n_bias:?} but found {n_weight:?}"
+                        ))
+                        .emit();
+                }
+
+                // Assert kinds are identical
+                arg_types.iter().enumerate().for_each(|(i, arg_type)| {
+                    if type_.kind != arg_type.kind {
+                        args[i]
+                            .span()
+                            .unwrap()
+                            .error(format!(
+                                "Expected kind {:?} but found {:?}",
+                                type_.kind, arg_types[0].kind
+                            ))
+                            .emit();
+                    }
+                });
+
+                // Assert devices are identical
+                arg_types.iter().enumerate().for_each(|(i, arg_type)| {
+                    if type_.device != arg_type.device {
+                        args[i]
+                            .span()
+                            .unwrap()
+                            .error(format!(
+                                "Expected device {:?} but found {:?}",
+                                type_.device, arg_types[0].device
+                            ))
+                            .emit();
+                    }
+                });
+
+                // let outtype = TensorType::new(
+                //     vec![b_arg.clone(), n_weight.clone()],
+                //     type_.kind,
+                //     type_.device,
+                // );
+                let outshape = vec![x.shape[0].clone(), weight_type.shape[1].clone()];
+                DetectedType::Inferred(TensorType::new(outshape, x.kind.clone(), x.device.clone()))
+            }
+            "view" => self.detect_view_shape(&self.detect_type(&args[0]), &args[1]),
+            "size" => {
+                let x = self.detect_type(args[0]);
+                let shape = x.shape.clone();
+                DetectedType::Shape(shape)
+            }
+            s => {
+                name.span()
+                    .unwrap()
+                    .error(format!("{s} not handled"))
+                    .emit();
                 DetectedType::NotDetected
             }
         }
