@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd)]
+#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, Hash)]
 pub enum Dim {
     Value(usize),
     // Neg(Box<Dim>),
@@ -172,14 +172,14 @@ impl Dim {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Kind {
     Float,
     Symbol(String),
     Implicit,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Device {
     Cpu,
     Symbol(String),

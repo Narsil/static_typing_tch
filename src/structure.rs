@@ -16,7 +16,7 @@ fn resolve(type_: &Type) -> Option<&Ident> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct Struct {
     pub(crate) members: HashMap<Ident, TensorType>,
     pub(crate) methods: HashMap<Ident, Signature>,

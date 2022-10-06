@@ -1,5 +1,5 @@
 use crate::tensor_type::{Device, Dim, Kind, TensorType};
-use crate::tensor_type_detection::{detect_type_type, DetectedType};
+use crate::tensor_type_detection::{detect_type_type, DetectedType, Transform};
 use crate::Module;
 use log::debug;
 use std::collections::HashMap;
@@ -40,6 +40,44 @@ impl Args {
 pub struct Signature {
     args: Vec<DetectedType>,
     return_type: DetectedType,
+}
+
+impl Signature {
+    fn detect_type(&self, name: &Ident, args: &[(&Expr, DetectedType)]) -> DetectedType {
+        println!("Arg types {args:?}");
+        println!("Arg registered {:?}", self.args);
+        let mut has_error = false;
+        let mut transform = Transform::default();
+        if args.len() != self.args.len() {
+            name.span()
+                .unwrap()
+                .error("Function call has not enough arguments")
+                .emit();
+            has_error = true;
+        }
+        for ((expr, arg), sarg) in args.into_iter().zip(self.args.iter()) {
+            if let Err(err) = transform.update(arg, sarg) {
+                expr.span()
+                    .unwrap()
+                    .error(format!("Function call is invalid {err:?}"))
+                    .emit();
+                has_error = true;
+            };
+        }
+        if has_error {
+            return DetectedType::NotDetected;
+        }
+        match transform.reverse(&self.return_type) {
+            Err(err) => {
+                name.span()
+                    .unwrap()
+                    .error(format!("Function call is invalid {err:?}"))
+                    .emit();
+                DetectedType::NotDetected
+            }
+            Ok(type_) => type_,
+        }
+    }
 }
 
 impl Args {
@@ -321,9 +359,7 @@ impl Args {
 
     fn maybe_assign_type(&mut self, ident: &Ident, call: &ExprCall) {
         let detected_type = self.detect_type_call(call);
-        if let DetectedType::Inferred(type_) = detected_type {
-            self.assign_type(&ident, DetectedType::Inferred(type_));
-        }
+        self.assign_type(&ident, detected_type);
     }
 
     fn detect_type_method_call(&self, call: &ExprMethodCall) -> DetectedType {
@@ -345,14 +381,30 @@ impl Args {
         }
     }
     fn detect_type_call(&self, call: &ExprCall) -> DetectedType {
+        let args = call.args.iter().collect::<Vec<_>>();
         match &*call.func {
             Expr::Path(expr) => {
-                if &expr.path.segments[0].ident.to_string() == "Tensor" {
-                    let name = &expr.path.segments[1].ident;
-                    let args = call.args.iter().collect::<Vec<_>>();
-                    self.detect_type_call2(name, &args)
-                } else {
-                    DetectedType::NotTensor
+                let ident = &expr.path.segments[0].ident;
+                match &ident.to_string()[..] {
+                    "Tensor" => {
+                        let name = &expr.path.segments[1].ident;
+                        self.detect_type_call2(name, &args)
+                    }
+                    name => {
+                        if let Some(_struct_) = self.module.structs.get(ident) {
+                            // TODO correct type checking of this call
+                            DetectedType::Custom(ident.clone())
+                        } else if let Some(fn_) = self.module.fns.get(ident) {
+                            let arg_types: Vec<_> = args
+                                .into_iter()
+                                .map(|arg| (arg, self.get_type(arg)))
+                                .collect();
+                            fn_.detect_type(&ident, &arg_types)
+                        } else {
+                            println!("Found Not tensor {name:?}");
+                            DetectedType::NotTensor
+                        }
+                    }
                 }
             }
             expr => {
@@ -462,7 +514,7 @@ impl Args {
                 let arg_types: Vec<_> = args
                     .into_iter()
                     .enumerate()
-                    .map(|(i, arg)| {
+                    .filter_map(|(i, arg)| {
                         let arg_type = self.get_type(arg);
                         match arg_type {
                             DetectedType::Inferred(type_) | DetectedType::Declared(type_) => {
@@ -475,9 +527,15 @@ impl Args {
                                         ))
                                         .emit();
                                 }
-                                type_
+                                Some(type_)
                             }
-                            _ => unreachable!(),
+                            n => {
+                                arg.span()
+                                    .unwrap()
+                                    .error(format!(" is of type {n:?} but expected a Tensor",))
+                                    .emit();
+                                None
+                            }
                         }
                     })
                     .collect();
