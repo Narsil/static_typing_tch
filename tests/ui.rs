@@ -24,7 +24,7 @@ fn transformer_mlp(
     dense_h_to_4h_bias: &Tensor<(H4, )>,
     dense_4h_to_h: &Tensor<(H4, H)>,
     dense_4h_to_h_bias: &Tensor<(H, )>,
-) -> Tensor<(B, S, H)> {
+) -> Tensor<(BS, H)> {
     let hidden_states = dense_h_to_4h_bias.addmm(&hidden_states, &dense_h_to_4h);
     let hidden_states = gelu(&hidden_states);
     let hidden_states = dense_4h_to_h_bias.addmm(&hidden_states, &dense_4h_to_h);

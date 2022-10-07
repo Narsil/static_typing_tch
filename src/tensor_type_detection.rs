@@ -127,7 +127,9 @@ impl Transform {
             .shape
             .iter()
             .map(|s| -> Result<Dim, TransformError> {
-                let d = self.r_shapes.get(s).ok_or(TransformError::InvalidReverse)?;
+                let d = s
+                    .transform(&self.r_shapes)
+                    .map_err(|_| TransformError::InvalidShapes)?;
                 Ok(d.clone())
             })
             .collect();

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 #[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, Hash)]
 pub enum Dim {
     Value(usize),
@@ -7,6 +9,8 @@ pub enum Dim {
     Mul(Vec<Dim>),
     Symbol(String),
 }
+
+pub struct DimError;
 
 impl Dim {
     pub fn from_num(n: usize) -> Self {
@@ -19,6 +23,32 @@ impl Dim {
 
     pub fn from_add(dims: Vec<Dim>) -> Self {
         Dim::Add(dims)
+    }
+
+    pub fn transform(&self, transform: &HashMap<Dim, Dim>) -> Result<Self, DimError> {
+        if let Some(d) = transform.get(self) {
+            // Fast path
+            Ok(d.clone())
+        } else {
+            match self {
+                Dim::Add(v) => {
+                    let td: Result<Vec<_>, _> = v
+                        .into_iter()
+                        .map(|d| -> Result<Self, DimError> { d.transform(transform) })
+                        .collect();
+                    Ok(Dim::Add(td?))
+                }
+                Dim::Mul(v) => {
+                    let td: Result<Vec<_>, _> = v
+                        .into_iter()
+                        .map(|d| -> Result<Self, DimError> { d.transform(transform) })
+                        .collect();
+                    Ok(Dim::Mul(td?))
+                }
+                Dim::Inv(v) => Ok(Dim::Inv(Box::new(v.as_ref().transform(transform)?))),
+                _ => Err(DimError),
+            }
+        }
     }
 }
 
